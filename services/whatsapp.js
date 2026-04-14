@@ -30,7 +30,7 @@ async function enviarWhatsApp(telefono, mensaje) {
   try {
     await twClient.messages.create({
       from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: `whatsapp:+54${telefono}`,
+      to: `whatsapp:+549${telefono}`,
       body: mensaje
     });
     console.log(`✅ WhatsApp enviado a ${telefono}`);
