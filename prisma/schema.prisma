@@ -1,0 +1,86 @@
+// ============================================
+// TOMADOR DE TURNOS - Schema Prisma (v7+)
+// Estudio de Uñas @danielayanetbeauty
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Servicio {
+  id               Int      @id @default(autoincrement())
+  nombre           String
+  duracion_minutos Int
+  precio_pesos     Decimal  @db.Decimal(10, 2)
+  activo           Boolean  @default(true)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  turnos Turno[]
+
+  @@map("servicios")
+}
+
+model HorarioConfig {
+  id                       Int      @id @default(autoincrement())
+  dia_semana               Int      @unique
+  abierto                  Boolean  @default(true)
+  hora_inicio              String   @default("09:00")
+  hora_fin                 String   @default("18:00")
+  espacio_entre_turnos_min Int      @default(10)
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+
+  @@map("horarios_config")
+}
+
+model BloqueCerrado {
+  id         Int      @id @default(autoincrement())
+  fecha      DateTime @db.Date
+  motivo     String?
+  created_at DateTime @default(now())
+
+  @@map("bloques_cerrados")
+}
+
+model Turno {
+  id                Int      @id @default(autoincrement())
+  cliente_nombre    String
+  cliente_apellido  String
+  cliente_telefono  String
+  servicio_id       Int
+  fecha             DateTime @db.Date
+  hora_inicio       String
+  hora_fin          String
+  estado            String   @default("confirmado")
+  pago_realizado    Boolean  @default(false)
+  pago_monto        Decimal? @db.Decimal(10, 2)
+  token_acceso      String   @default(uuid())
+  token_expires_at  DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  servicio Servicio @relation(fields: [servicio_id], references: [id])
+
+  @@index([fecha, estado])
+  @@index([cliente_telefono, cliente_apellido])
+  @@index([token_acceso])
+  @@map("turnos")
+}
+
+model UsuarioAdmin {
+  id            Int       @id @default(autoincrement())
+  email         String    @unique
+  password_hash String
+  nombre        String
+  activo        Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  last_login    DateTime?
+
+  @@map("usuarios_admin")
+}

@@ -1,0 +1,97 @@
+const twilio = require('twilio');
+
+let client = null;
+
+function getClient() {
+  if (!client && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  }
+  return client;
+}
+
+// ── Formatear fecha legible ────────────────────
+function formatearFecha(fecha) {
+  const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const d = new Date(fecha);
+  const dia = dias[d.getDay()];
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dia} ${dd}/${mm}`;
+}
+
+// ── Enviar mensaje genérico ────────────────────
+async function enviarWhatsApp(telefono, mensaje) {
+  const twClient = getClient();
+  if (!twClient) {
+    console.log('⚠️  Twilio no configurado. Mensaje no enviado:', mensaje);
+    return false;
+  }
+
+  try {
+    await twClient.messages.create({
+      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+      to: `whatsapp:+54${telefono}`,
+      body: mensaje
+    });
+    console.log(`✅ WhatsApp enviado a ${telefono}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error enviando WhatsApp:', error.message);
+    return false;
+  }
+}
+
+// ── Confirmación de turno ──────────────────────
+async function enviarConfirmacion(turno) {
+  const fechaStr = formatearFecha(turno.fecha);
+  const mensaje = `¡Hola ${turno.cliente_nombre}! 🎉\n\n` +
+    `Tu turno está confirmado:\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n\n` +
+    `Podés ver o modificar tu turno en:\n` +
+    `${process.env.FRONTEND_URL}/mistura`;
+
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
+}
+
+// ── Recordatorio (24h antes) ───────────────────
+async function enviarRecordatorio(turno) {
+  const mensaje = `⏰ ¡Recordatorio!\n\n` +
+    `Tenés turno mañana a las ${turno.hora_inicio} hs ` +
+    `para tu ${turno.servicio.nombre}.\n\n` +
+    `¡Te esperamos! 💅`;
+
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
+}
+
+// ── Cancelación ────────────────────────────────
+async function enviarCancelacion(turno) {
+  const fechaStr = formatearFecha(turno.fecha);
+  const mensaje = `Hola ${turno.cliente_nombre},\n\n` +
+    `Tu turno del ${fechaStr} a las ${turno.hora_inicio} hs ` +
+    `fue cancelado.\n\n` +
+    `Podés reservar uno nuevo cuando quieras 💅`;
+
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
+}
+
+// ── Modificación ───────────────────────────────
+async function enviarModificacion(turno) {
+  const fechaStr = formatearFecha(turno.fecha);
+  const mensaje = `Hola ${turno.cliente_nombre},\n\n` +
+    `Tu turno fue modificado:\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n\n` +
+    `¡Te esperamos! 💅`;
+
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
+}
+
+module.exports = {
+  enviarConfirmacion,
+  enviarRecordatorio,
+  enviarCancelacion,
+  enviarModificacion
+};
