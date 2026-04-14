@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { authAdmin } = require('../middleware/auth');
+const { calcularHoraFin, verificarYReservar } = require('../lib/availability');
+const { enviarConfirmacion } = require('../services/whatsapp');
 
 // ── Login admin ────────────────────────────────
 router.post('/login', async (req, res, next) => {
@@ -14,9 +17,7 @@ router.post('/login', async (req, res, next) => {
       return res.status(400).json({ error: 'Faltan campos: email, password' });
     }
 
-    const admin = await prisma.usuarioAdmin.findUnique({
-      where: { email }
-    });
+    const admin = await prisma.usuarioAdmin.findUnique({ where: { email } });
 
     if (!admin || !admin.activo) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -27,7 +28,6 @@ router.post('/login', async (req, res, next) => {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
-    // Actualizar last_login
     await prisma.usuarioAdmin.update({
       where: { id: admin.id },
       data: { last_login: new Date() }
@@ -68,7 +68,58 @@ router.get('/turnos', authAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Recordatorios pendientes (turnos de mañana) ─
+// ── Admin: Crear turno manual ──────────────────
+router.post('/turnos', authAdmin, async (req, res, next) => {
+  try {
+    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio } = req.body;
+
+    if (!nombre || !apellido || !telefono || !servicio_id || !fecha || !hora_inicio) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    const telLimpio = telefono.replace(/\D/g, '');
+
+    const servicio = await prisma.servicio.findUnique({
+      where: { id: parseInt(servicio_id) }
+    });
+    if (!servicio || !servicio.activo) {
+      return res.status(404).json({ error: 'Servicio no encontrado' });
+    }
+
+    const horaFin = calcularHoraFin(hora_inicio, servicio.duracion_minutos);
+
+    const tokenExpires = new Date();
+    tokenExpires.setDate(tokenExpires.getDate() + 30);
+
+    const turno = await verificarYReservar({
+      cliente_nombre: nombre.trim(),
+      cliente_apellido: apellido.trim(),
+      cliente_telefono: telLimpio,
+      servicio_id: parseInt(servicio_id),
+      fecha: new Date(fecha),
+      hora_inicio,
+      hora_fin: horaFin,
+      estado: 'confirmado',
+      token_acceso: uuidv4(),
+      token_expires_at: tokenExpires,
+      origen: 'manual'
+    });
+
+    // Enviar WhatsApp (no bloqueante)
+    enviarConfirmacion(turno).catch(err =>
+      console.error('Error enviando WA:', err.message)
+    );
+
+    res.status(201).json({ success: true, turno });
+  } catch (err) {
+    if (err.message === 'HORARIO_NO_DISPONIBLE') {
+      return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
+    }
+    next(err);
+  }
+});
+
+// ── Recordatorios pendientes ───────────────────
 router.get('/recordatorios-pendientes', authAdmin, async (req, res, next) => {
   try {
     const manana = new Date();
@@ -76,10 +127,7 @@ router.get('/recordatorios-pendientes', authAdmin, async (req, res, next) => {
     const fechaManana = manana.toISOString().split('T')[0];
 
     const turnos = await prisma.turno.findMany({
-      where: {
-        fecha: new Date(fechaManana),
-        estado: 'confirmado'
-      },
+      where: { fecha: new Date(fechaManana), estado: 'confirmado' },
       include: { servicio: true },
       orderBy: { hora_inicio: 'asc' }
     });

@@ -1,6 +1,6 @@
 // ============================================
-// TOMADOR DE TURNOS - Schema Prisma (v7+)
-// Estudio de Uñas @danielayanetbeauty
+// TOMADOR DE TURNOS - Schema Prisma v2
+// Múltiples rangos horarios por día
 // ============================================
 
 generator client {
@@ -28,7 +28,7 @@ model Servicio {
 
 model HorarioConfig {
   id                       Int      @id @default(autoincrement())
-  dia_semana               Int      @unique
+  dia_semana               Int      // 0=lun, 1=mar, ..., 6=dom (YA NO ES UNIQUE)
   abierto                  Boolean  @default(true)
   hora_inicio              String   @default("09:00")
   hora_fin                 String   @default("18:00")
@@ -62,6 +62,7 @@ model Turno {
   pago_monto        Decimal? @db.Decimal(10, 2)
   token_acceso      String   @default(uuid())
   token_expires_at  DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
+  origen            String   @default("web") // web | manual
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
