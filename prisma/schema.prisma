@@ -86,3 +86,12 @@ model UsuarioAdmin {
 
   @@map("usuarios_admin")
 }
+model NotaCliente {
+  id                Int      @id @default(autoincrement())
+  cliente_telefono  String
+  texto             String
+  created_at        DateTime @default(now())
+
+  @@index([cliente_telefono])
+  @@map("notas_clientes")
+}
