@@ -134,5 +134,25 @@ router.get('/recordatorios-pendientes', authAdmin, async (req, res, next) => {
     res.json(turnos);
   } catch (err) { next(err); }
 });
+// ── TEST: Disparar recordatorio manual ─────────
+router.post('/test-recordatorio/:turnoId', authAdmin, async (req, res, next) => {
+  try {
+    const { enviarRecordatorio } = require('../services/whatsapp');
+    const turno = await prisma.turno.findUnique({
+      where: { id: parseInt(req.params.turnoId) },
+      include: { servicio: true }
+    });
+    if (!turno) return res.status(404).json({ error: 'Turno no encontrado' });
+
+    const enviado = await enviarRecordatorio(turno);
+    if (enviado) {
+      await prisma.turno.update({
+        where: { id: turno.id },
+        data: { recordatorio_enviado: true }
+      });
+    }
+    res.json({ success: enviado, turno_id: turno.id });
+  } catch (err) { next(err); }
+});
 
 module.exports = router;
