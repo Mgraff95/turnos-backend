@@ -22,6 +22,7 @@ model Servicio {
   updated_at       DateTime @updatedAt
 
   turnos Turno[]
+waitlist Waitlist[]
 
   @@map("servicios")
 }
@@ -94,4 +95,22 @@ model NotaCliente {
 
   @@index([cliente_telefono])
   @@map("notas_clientes")
+}
+model Waitlist {
+  id                Int      @id @default(autoincrement())
+  cliente_nombre    String
+  cliente_apellido  String
+  cliente_telefono  String
+  servicio_id       Int
+  fecha             DateTime @db.Date
+  franja            String   // "manana" o "tarde"
+  notificado        Boolean  @default(false)
+  activo            Boolean  @default(true)
+  created_at        DateTime @default(now())
+
+  servicio Servicio @relation(fields: [servicio_id], references: [id])
+
+  @@index([fecha, franja, activo])
+  @@index([cliente_telefono])
+  @@map("waitlist")
 }

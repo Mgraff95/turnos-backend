@@ -23,6 +23,7 @@ app.use('/api/turnos', require('./routes/turnos'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/whatsapp/webhook', require('./routes/webhook'));
 app.use('/api/admin/clientes', require('./routes/clientes'));
+app.use('/api/waitlist', require('./routes/waitlist'));
 
 // ── Health check ───────────────────────────────
 app.get('/health', (req, res) => {

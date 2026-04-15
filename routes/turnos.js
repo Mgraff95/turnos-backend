@@ -3,8 +3,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { obtenerHorariosDisponibles, calcularHoraFin, verificarYReservar } = require('../lib/availability');
-const { enviarConfirmacion, enviarCancelacion, enviarModificacion } = require('../services/whatsapp');
-
+const { enviarConfirmacion, enviarCancelacion, enviarModificacion, notificarTurnoTomadoWaitlist } = require('../services/whatsapp');
 // ── Validar teléfono argentino (10 dígitos) ────
 function validarTelefono(tel) {
   const limpio = tel.replace(/\D/g, '');
@@ -53,6 +52,26 @@ router.post('/', async (req, res, next) => {
     enviarConfirmacion(turno).catch(err =>
       console.error('Error enviando WA de confirmación:', err.message)
     );
+// Verificar si este turno cubre un slot del waitlist → notificar a Daniela
+    const franja = parseInt(turno.hora_inicio.split(':')[0]) < 14 ? 'manana' : 'tarde';
+    const waitlistMatch = await prisma.waitlist.findFirst({
+      where: {
+        fecha: turno.fecha,
+        franja,
+        activo: true,
+        notificado: true
+      }
+    });
+    if (waitlistMatch) {
+      notificarTurnoTomadoWaitlist(turno).catch(err =>
+        console.error('Error notificando waitlist a Daniela:', err.message)
+      );
+      // Desactivar entradas de waitlist para esta fecha/franja
+      prisma.waitlist.updateMany({
+        where: { fecha: turno.fecha, franja, activo: true },
+        data: { activo: false }
+      }).catch(() => {});
+    }
 
     res.status(201).json({
       id: turno.id,

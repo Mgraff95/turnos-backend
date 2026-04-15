@@ -115,11 +115,42 @@ async function enviarModificacion(turno) {
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
 
+// ── Notificación waitlist: se liberó un turno ──
+async function notificarWaitlist(entrada, horaLiberada) {
+  const fechaStr = formatearFecha(entrada.fecha);
+  const mensaje = `¡Hola ${entrada.cliente_nombre}! 👋\n\n` +
+    `Se liberó un turno que te puede interesar:\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${horaLiberada} hs\n` +
+    `💅 ${entrada.servicio.nombre}\n\n` +
+    `¡Reservalo antes que otro! 👇\n` +
+    `${process.env.FRONTEND_URL}/reservar`;
+  return enviarWhatsApp(entrada.cliente_telefono, mensaje);
+}
+
+// ── Notificación a Daniela: turno tomado por waitlist ──
+async function notificarTurnoTomadoWaitlist(turno) {
+  const fechaStr = formatearFecha(turno.fecha);
+  const telefonoDaniela = process.env.DANIELA_TELEFONO;
+  if (!telefonoDaniela) return false;
+  const mensaje = `📢 Turno tomado por waitlist\n\n` +
+    `${turno.cliente_nombre} ${turno.cliente_apellido} reservó ` +
+    `un turno que se había liberado:\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n` +
+    `📱 ${turno.cliente_telefono}\n\n` +
+    `⚠️ No te vayas del local.`;
+  return enviarWhatsApp(telefonoDaniela, mensaje);
+}
+
 module.exports = {
   enviarConfirmacion,
   enviarRecordatorio,
   enviarAsistenciaConfirmada,
   enviarCancelacion,
   notificarCancelacionADaniela,
-  enviarModificacion
+  enviarModificacion,
+  notificarWaitlist,
+  notificarTurnoTomadoWaitlist
 };
