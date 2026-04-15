@@ -34,7 +34,6 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
 
     if (!turno) {
       console.log(`   No se encontró turno pendiente para ${telefono}`);
-      // Responder con TwiML vacío
       res.type('text/xml');
       return res.send('<Response></Response>');
     }
