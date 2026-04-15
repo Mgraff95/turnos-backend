@@ -63,6 +63,7 @@ model Turno {
   token_acceso      String   @default(uuid())
   token_expires_at  DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
   origen            String   @default("web") // web | manual
+  recordatorio_enviado Boolean @default(false)
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
