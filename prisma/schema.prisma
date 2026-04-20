@@ -18,11 +18,15 @@ model Servicio {
   duracion_minutos Int
   precio_pesos     Decimal  @db.Decimal(10, 2)
   activo           Boolean  @default(true)
+  intercalable           Boolean @default(false)
+  intercalar_desde_min   Int?
+  servicios_compatibles  Int[]   @default([])
+  max_simultaneos        Int     @default(2)
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
-  turnos Turno[]
-waitlist Waitlist[]
+  turnos   Turno[]
+  waitlist Waitlist[]
 
   @@map("servicios")
 }

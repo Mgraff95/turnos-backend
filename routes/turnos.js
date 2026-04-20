@@ -101,7 +101,8 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
 
     const horarios = await obtenerHorariosDisponibles(
       new Date(fecha),
-      servicio.duracion_minutos
+      servicio.duracion_minutos,
+      parseInt(servicio_id)
     );
 
     res.json({ fecha, servicio: servicio.nombre, horarios });
