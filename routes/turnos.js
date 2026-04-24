@@ -54,14 +54,13 @@ router.post('/', async (req, res, next) => {
     );
 // Verificar si este turno cubre un slot del waitlist → notificar a Daniela
     const franja = parseInt(turno.hora_inicio.split(':')[0]) < 14 ? 'manana' : 'tarde';
-    const waitlistMatch = await prisma.waitlist.findFirst({
-      where: {
-        fecha: turno.fecha,
-        franja,
-        activo: true,
-        notificado: true
-      }
-    });
+const waitlistMatch = await prisma.waitlist.findFirst({
+  where: {
+    fecha: turno.fecha,
+    franja,
+    activo: true
+  }
+});
     if (waitlistMatch) {
       notificarTurnoTomadoWaitlist(turno).catch(err =>
         console.error('Error notificando waitlist a Daniela:', err.message)
