@@ -15,7 +15,8 @@ function iniciarScheduler() {
       const turnos = await prisma.turno.findMany({
         where: {
           fecha: new Date(fechaManana),
-          estado: 'confirmado'
+          estado: 'confirmado',
+          recordatorio_enviado: false
         },
         include: { servicio: true }
       });
@@ -23,7 +24,13 @@ function iniciarScheduler() {
       let enviados = 0;
       for (const turno of turnos) {
         const ok = await enviarRecordatorio(turno);
-        if (ok) enviados++;
+        if (ok) {
+          await prisma.turno.update({
+            where: { id: turno.id },
+            data: { recordatorio_enviado: true }
+          });
+          enviados++;
+        }
       }
 
       console.log(`✅ Recordatorios enviados: ${enviados}/${turnos.length}`);
