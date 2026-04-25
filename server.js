@@ -10,7 +10,8 @@ app.use(cors({
   origin: [
     process.env.FRONTEND_URL || 'http://localhost:3000',
     'http://localhost:3000',
-    'https://turnos-frontend-eta.vercel.app'
+    'https://turnos-frontend-eta.vercel.app',
+    'https://turnos.danielayanetbeauty.com'
   ],
   credentials: true
 }));
