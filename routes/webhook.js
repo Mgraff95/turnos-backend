@@ -55,7 +55,7 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
     console.log(`📩 Mensaje recibido de ${From}: "${Body}"`);
 
     const telefono = From.replace('whatsapp:+549', '').replace('whatsapp:+54', '');
-    const respuesta = Body.trim();
+    const respuesta = Body.trim().toLowerCase();
 
     const hoy = new Date();
     const turno = await prisma.turno.findFirst({
@@ -75,11 +75,15 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
       return res.send('<Response></Response>');
     }
 
-    if (respuesta === '1') {
+    // Acepta tanto el texto del botón del template como "1"/"2" por compatibilidad
+    const confirmo = respuesta === 'sí, confirmo' || respuesta === 'si, confirmo' || respuesta === '1';
+    const cancelo  = respuesta === 'no puedo ir'  || respuesta === '2';
+
+    if (confirmo) {
       console.log(`   ✅ ${turno.cliente_nombre} confirmó asistencia (turno #${turno.id})`);
       await enviarAsistenciaConfirmada(turno);
 
-    } else if (respuesta === '2') {
+    } else if (cancelo) {
       console.log(`   ❌ ${turno.cliente_nombre} canceló (turno #${turno.id})`);
 
       await prisma.turno.update({
@@ -94,7 +98,7 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
       await procesarWaitlist(turno);
 
     } else {
-      console.log(`   ❓ Respuesta no reconocida: "${respuesta}"`);
+      console.log(`   ❓ Respuesta no reconocida: "${Body.trim()}"`);
     }
 
     res.type('text/xml');
