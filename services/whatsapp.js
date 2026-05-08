@@ -43,10 +43,10 @@ async function enviarTemplate(telefono, contentSid, variables) {
     return true;
   } catch (error) {
     console.error('❌ Error enviando WhatsApp template:', error.message);
+    console.error('❌ Detalle:', JSON.stringify(error, null, 2));
     return false;
   }
 }
-
 // ── Enviar mensaje de texto libre (solo para ventana 24hs activa) ──
 async function enviarWhatsApp(telefono, mensaje) {
   const twClient = getClient();
