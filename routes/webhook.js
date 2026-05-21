@@ -47,15 +47,33 @@ async function procesarWaitlist(turno) {
   }
 }
 
-// ── POST /api/whatsapp/webhook ─────────────────
-router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
+// ── POST /api/whatsapp/webhook (Wassenger) ─────
+router.post('/', express.json(), async (req, res) => {
   try {
-    const { Body, From } = req.body;
+    // Wassenger envía el payload en formato JSON
+    const payload = req.body;
 
-    console.log(`📩 Mensaje recibido de ${From}: "${Body}"`);
+    // Solo procesar mensajes entrantes (no los que envía el sistema)
+    if (!payload || payload.event !== 'message:in:new') {
+      return res.sendStatus(200);
+    }
 
-    const telefono = From.replace('whatsapp:+549', '').replace('whatsapp:+54', '');
-    const respuesta = Body.trim().toLowerCase();
+    const data = payload.data;
+    if (!data) return res.sendStatus(200);
+
+    const fromPhone = data.fromNumber || data.from || '';
+    const bodyText = data.body || data.text || '';
+
+    console.log(`📩 Mensaje recibido de ${fromPhone}: "${bodyText}"`);
+
+    // Limpiar teléfono — quedarnos solo con los 10 dígitos locales
+    const telefono = fromPhone
+      .replace(/\D/g, '')
+      .replace(/^549/, '')
+      .replace(/^54/, '')
+      .slice(-10);
+
+    const respuesta = bodyText.trim();
 
     const hoy = new Date();
     const turno = await prisma.turno.findFirst({
@@ -71,19 +89,14 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
 
     if (!turno) {
       console.log(`   No se encontró turno pendiente para ${telefono}`);
-      res.type('text/xml');
-      return res.send('<Response></Response>');
+      return res.sendStatus(200);
     }
 
-    // Acepta tanto el texto del botón del template como "1"/"2" por compatibilidad
-    const confirmo = respuesta === 'sí, confirmo' || respuesta === 'si, confirmo' || respuesta === '1';
-    const cancelo  = respuesta === 'no puedo ir'  || respuesta === '2';
-
-    if (confirmo) {
+    if (respuesta === '1') {
       console.log(`   ✅ ${turno.cliente_nombre} confirmó asistencia (turno #${turno.id})`);
       await enviarAsistenciaConfirmada(turno);
 
-    } else if (cancelo) {
+    } else if (respuesta === '2') {
       console.log(`   ❌ ${turno.cliente_nombre} canceló (turno #${turno.id})`);
 
       await prisma.turno.update({
@@ -93,21 +106,17 @@ router.post('/', express.urlencoded({ extended: false }), async (req, res) => {
 
       await enviarCancelacion(turno);
       await notificarCancelacionADaniela(turno);
-
-      // Notificar a la waitlist
       await procesarWaitlist(turno);
 
     } else {
-      console.log(`   ❓ Respuesta no reconocida: "${Body.trim()}"`);
+      console.log(`   ❓ Respuesta no reconocida: "${respuesta}"`);
     }
 
-    res.type('text/xml');
-    res.send('<Response></Response>');
+    res.sendStatus(200);
 
   } catch (error) {
-    console.error('❌ Error en webhook WhatsApp:', error.message);
-    res.type('text/xml');
-    res.send('<Response></Response>');
+    console.error('❌ Error en webhook Wassenger:', error.message);
+    res.sendStatus(200);
   }
 });
 
