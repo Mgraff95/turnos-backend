@@ -1,19 +1,8 @@
-const twilio = require('twilio');
+const axios = require('axios');
 
-let client = null;
-function getClient() {
-  if (!client && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-    client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-  }
-  return client;
-}
-
-// ── Template SIDs aprobados por Meta ──────────
-const TEMPLATES = {
-  confirmacion:  'HX70dd5436824096aa59bab093172d5cec',
-  recordatorio:  'HX2457240295fa7680fd630398d3d1434b',
-  cancelacion:   'HX376c93f177b89288c26bb76aa62e474e',
-};
+const WASSENGER_API = 'https://api.wassenger.com/v1';
+const WASSENGER_TOKEN = process.env.WASSENGER_TOKEN;
+const WASSENGER_DEVICE = process.env.WASSENGER_DEVICE; // ID del número: 6a0e57773741732d95dbd1a3
 
 // ── Formatear fecha legible ────────────────────
 function formatearFecha(fecha) {
@@ -25,76 +14,62 @@ function formatearFecha(fecha) {
   return `${dia} ${dd}/${mm}`;
 }
 
-// ── Enviar con template aprobado ───────────────
-async function enviarTemplate(telefono, contentSid, variables) {
-  const twClient = getClient();
-  if (!twClient) {
-    console.log('⚠️  Twilio no configurado. Template no enviado.');
-    return false;
-  }
-  try {
-    await twClient.messages.create({
-      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: `whatsapp:+549${telefono}`,
-      contentSid,
-      contentVariables: JSON.stringify(variables),
-    });
-    console.log(`✅ WhatsApp (template) enviado a ${telefono}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Error enviando WhatsApp template:', error.message);
-    console.error('❌ Detalle:', JSON.stringify(error, null, 2));
-    return false;
-  }
-}
-// ── Enviar mensaje de texto libre (solo para ventana 24hs activa) ──
+// ── Enviar mensaje genérico via Wassenger ──────
 async function enviarWhatsApp(telefono, mensaje) {
-  const twClient = getClient();
-  if (!twClient) {
-    console.log('⚠️  Twilio no configurado. Mensaje no enviado:', mensaje);
+  if (!WASSENGER_TOKEN) {
+    console.log('⚠️  Wassenger no configurado. Mensaje no enviado:', mensaje);
     return false;
   }
   try {
-    await twClient.messages.create({
-      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: `whatsapp:+549${telefono}`,
-      body: mensaje,
-    });
-    console.log(`✅ WhatsApp enviado a ${telefono}`);
+    await axios.post(
+      `${WASSENGER_API}/messages`,
+      {
+        phone: `+549${telefono}`,
+        message: mensaje,
+        ...(WASSENGER_DEVICE ? { device: WASSENGER_DEVICE } : {})
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Token': WASSENGER_TOKEN
+        }
+      }
+    );
+    console.log(`✅ WhatsApp (Wassenger) enviado a ${telefono}`);
     return true;
   } catch (error) {
-    console.error('❌ Error enviando WhatsApp:', error.message);
+    const errMsg = error.response?.data?.message || error.message;
+    console.error(`❌ Error enviando WhatsApp (Wassenger): ${errMsg}`);
     return false;
   }
 }
 
 // ── Confirmación de turno ──────────────────────
-// Template: "Hola {{1}}, tu turno está confirmado 🎉 📅 {{2}} ⏰ {{3}} 💅 {{4}} Podés ver tu turno en: {{5}} ¡Te esperamos!"
 async function enviarConfirmacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
-  return enviarTemplate(turno.cliente_telefono, TEMPLATES.confirmacion, {
-    1: turno.cliente_nombre,
-    2: fechaStr,
-    3: turno.hora_inicio,
-    4: turno.servicio.nombre,
-    5: `${process.env.FRONTEND_URL}/mis-turnos`,
-  });
+  const mensaje = `¡Hola ${turno.cliente_nombre}! 🎉\n\n` +
+    `Tu turno está confirmado:\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n\n` +
+    `Podés ver o modificar tu turno en:\n` +
+    `${process.env.FRONTEND_URL}/mistura`;
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
 
-// ── Recordatorio (24h antes) ───────────────────
-// Template: "⏰ ¡Recordatorio de turno! Hola {{1}}, tenés turno mañana: 📅 {{2}} ⏰ {{3}} hs 💅 {{4}} ¿Vas a poder venir?"
-// Botones: "Sí, confirmo" / "No puedo ir"
+// ── Recordatorio con opciones (24h antes) ──────
 async function enviarRecordatorio(turno) {
-  const fechaStr = formatearFecha(turno.fecha);
-  return enviarTemplate(turno.cliente_telefono, TEMPLATES.recordatorio, {
-    1: turno.cliente_nombre,
-    2: fechaStr,
-    3: turno.hora_inicio,
-    4: turno.servicio.nombre,
-  });
+  const mensaje = `⏰ ¡Recordatorio!\n\n` +
+    `Tenés turno mañana a las ${turno.hora_inicio} hs ` +
+    `para ${turno.servicio.nombre}.\n\n` +
+    `Respondé con:\n` +
+    `*1* ✅ Confirmo asistencia\n` +
+    `*2* ❌ No puedo ir\n\n` +
+    `¡Gracias! 💅`;
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
 
-// ── Confirmación de asistencia (texto libre, dentro de ventana 24hs) ──
+// ── Confirmación de asistencia ─────────────────
 async function enviarAsistenciaConfirmada(turno) {
   const mensaje = `✅ ¡Perfecto ${turno.cliente_nombre}!\n\n` +
     `Tu asistencia está confirmada para mañana ` +
@@ -104,16 +79,15 @@ async function enviarAsistenciaConfirmada(turno) {
 }
 
 // ── Cancelación por cliente ────────────────────
-// Template: "Hola {{1}}, tu turno fue cancelado. 📅 {{2}} ⏰ {{3}} hs 💅 {{4}} Podés reservar uno nuevo cuando quieras en: {{5}} ¡Te esperamos pronto!"
 async function enviarCancelacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
-  return enviarTemplate(turno.cliente_telefono, TEMPLATES.cancelacion, {
-    1: turno.cliente_nombre,
-    2: fechaStr,
-    3: turno.hora_inicio,
-    4: turno.servicio.nombre,
-    5: process.env.FRONTEND_URL,
-  });
+  const mensaje = `Hola ${turno.cliente_nombre},\n\n` +
+    `Tu turno del ${fechaStr} a las ${turno.hora_inicio} hs ` +
+    `fue cancelado.\n\n` +
+    `Podés reservar uno nuevo cuando quieras en:\n` +
+    `${process.env.FRONTEND_URL}\n\n` +
+    `¡Te esperamos pronto! 💅`;
+  return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
 
 // ── Notificación a Daniela de cancelación ──────
@@ -155,7 +129,7 @@ async function notificarWaitlist(entrada, horaLiberada) {
     `⏰ ${horaLiberada} hs\n` +
     `💅 ${entrada.servicio.nombre}\n\n` +
     `¡Reservalo antes que otro! 👇\n` +
-    `${process.env.FRONTEND_URL}/reservar`;
+    `${process.env.FRONTEND_URL}`;
   return enviarWhatsApp(entrada.cliente_telefono, mensaje);
 }
 
@@ -183,5 +157,5 @@ module.exports = {
   notificarCancelacionADaniela,
   enviarModificacion,
   notificarWaitlist,
-  notificarTurnoTomadoWaitlist,
+  notificarTurnoTomadoWaitlist
 };
