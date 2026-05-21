@@ -3,11 +3,18 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { obtenerHorariosDisponibles, calcularHoraFin, verificarYReservar } = require('../lib/availability');
-const { enviarConfirmacion, enviarCancelacion, enviarModificacion, notificarTurnoTomadoWaitlist } = require('../services/whatsapp');
+const { enviarConfirmacion, enviarCancelacion, enviarModificacion, enviarAsistenciaConfirmada, notificarCancelacionADaniela, notificarWaitlist, notificarTurnoTomadoWaitlist } = require('../services/whatsapp');
+
 // ── Validar teléfono argentino (10 dígitos) ────
 function validarTelefono(tel) {
   const limpio = tel.replace(/\D/g, '');
   return /^\d{10}$/.test(limpio) ? limpio : null;
+}
+
+// ── Determinar franja horaria ──────────────────
+function determinarFranja(horaInicio) {
+  const hora = parseInt(horaInicio.split(':')[0]);
+  return hora < 14 ? 'manana' : 'tarde';
 }
 
 // ── POST /api/turnos → Crear turno ─────────────
@@ -52,38 +59,134 @@ router.post('/', async (req, res, next) => {
     enviarConfirmacion(turno).catch(err =>
       console.error('Error enviando WA de confirmación:', err.message)
     );
-// Verificar si este turno cubre un slot del waitlist → notificar a Daniela
-    const franja = parseInt(turno.hora_inicio.split(':')[0]) < 14 ? 'manana' : 'tarde';
-const waitlistMatch = await prisma.waitlist.findFirst({
-  where: {
-    fecha: turno.fecha,
-    franja,
-    activo: true
-  }
-});
+
+    // Verificar si este turno cubre un slot del waitlist → notificar a Daniela
+    const franja = determinarFranja(turno.hora_inicio);
+    const waitlistMatch = await prisma.waitlist.findFirst({
+      where: { fecha: turno.fecha, franja, activo: true, notificado: true }
+    });
     if (waitlistMatch) {
       notificarTurnoTomadoWaitlist(turno).catch(err =>
         console.error('Error notificando waitlist a Daniela:', err.message)
       );
-      // Desactivar entradas de waitlist para esta fecha/franja
       prisma.waitlist.updateMany({
         where: { fecha: turno.fecha, franja, activo: true },
         data: { activo: false }
       }).catch(() => {});
     }
 
-    res.status(201).json({
-      id: turno.id,
-      token: turno.token_acceso,
-      turno,
-      success: true
-    });
+    res.status(201).json({ id: turno.id, token: turno.token_acceso, turno, success: true });
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
       return res.status(409).json({ error: 'Ese horario ya no está disponible. Por favor elegí otro.' });
     }
     next(err);
   }
+});
+
+// ── GET /api/turnos/confirmar?token=XXX → Confirmar asistencia por link ──
+router.get('/confirmar', async (req, res, next) => {
+  try {
+    const { token } = req.query;
+    const frontendUrl = process.env.FRONTEND_URL;
+
+    if (!token) {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=Token+inválido`);
+    }
+
+    const turno = await prisma.turno.findFirst({
+      where: { token_acceso: token },
+      include: { servicio: true }
+    });
+
+    if (!turno) {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=Turno+no+encontrado`);
+    }
+
+    if (turno.estado !== 'confirmado') {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=El+turno+ya+no+está+activo`);
+    }
+
+    // Verificar que el recordatorio fue enviado (solo confirmar si recibió el recordatorio)
+    if (!turno.recordatorio_enviado) {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=No+hay+recordatorio+pendiente`);
+    }
+
+    console.log(`✅ ${turno.cliente_nombre} confirmó asistencia por link (turno #${turno.id})`);
+
+    // Enviar mensaje de confirmación
+    enviarAsistenciaConfirmada(turno).catch(err =>
+      console.error('Error enviando WA asistencia confirmada:', err.message)
+    );
+
+    return res.redirect(`${frontendUrl}/respuesta?estado=confirmado`);
+  } catch (err) { next(err); }
+});
+
+// ── GET /api/turnos/cancelar?token=XXX → Cancelar por link ──
+router.get('/cancelar', async (req, res, next) => {
+  try {
+    const { token } = req.query;
+    const frontendUrl = process.env.FRONTEND_URL;
+
+    if (!token) {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=Token+inválido`);
+    }
+
+    const turno = await prisma.turno.findFirst({
+      where: { token_acceso: token },
+      include: { servicio: true }
+    });
+
+    if (!turno) {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=Turno+no+encontrado`);
+    }
+
+    if (turno.estado !== 'confirmado') {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=El+turno+ya+no+está+activo`);
+    }
+
+    // Verificar >= 24h antes
+    const ahora = new Date();
+    const fechaTurno = new Date(`${turno.fecha.toISOString().split('T')[0]}T${turno.hora_inicio}`);
+    const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
+
+    if (horasRestantes < 24) {
+      return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=Solo+podés+cancelar+hasta+24hs+antes`);
+    }
+
+    await prisma.turno.update({
+      where: { id: turno.id },
+      data: { estado: 'cancelado' }
+    });
+
+    console.log(`❌ ${turno.cliente_nombre} canceló por link (turno #${turno.id})`);
+
+    enviarCancelacion(turno).catch(err =>
+      console.error('Error enviando WA cancelación:', err.message)
+    );
+    notificarCancelacionADaniela(turno).catch(err =>
+      console.error('Error notificando cancelación a Daniela:', err.message)
+    );
+
+    // Notificar waitlist
+    const franja = determinarFranja(turno.hora_inicio);
+    const esperando = await prisma.waitlist.findMany({
+      where: { fecha: turno.fecha, franja, activo: true, notificado: false },
+      include: { servicio: true }
+    });
+    for (const entrada of esperando) {
+      const enviado = await notificarWaitlist(entrada, turno.hora_inicio);
+      if (enviado) {
+        await prisma.waitlist.update({
+          where: { id: entrada.id },
+          data: { notificado: true }
+        });
+      }
+    }
+
+    return res.redirect(`${frontendUrl}/respuesta?estado=cancelado`);
+  } catch (err) { next(err); }
 });
 
 // ── GET /api/turnos/disponibilidad/:fecha/:servicio_id ─
@@ -152,7 +255,6 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Solo se pueden modificar turnos confirmados' });
     }
 
-    // Verificar >= 48h antes
     const ahora = new Date();
     const fechaTurno = new Date(`${turno.fecha.toISOString().split('T')[0]}T${turno.hora_inicio}`);
     const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
@@ -167,7 +269,6 @@ router.patch('/:id', async (req, res, next) => {
     const horaInicio = nueva_hora_inicio || turno.hora_inicio;
     const horaFin = calcularHoraFin(horaInicio, servicio.duracion_minutos);
 
-    // Cancelar anterior + crear nuevo (atómico)
     const turnoActualizado = await prisma.$transaction(async (tx) => {
       await tx.turno.update({
         where: { id: parseInt(id) },
@@ -218,7 +319,6 @@ router.delete('/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Solo se pueden cancelar turnos confirmados' });
     }
 
-    // Verificar >= 24h antes
     const ahora = new Date();
     const fechaTurno = new Date(`${turno.fecha.toISOString().split('T')[0]}T${turno.hora_inicio}`);
     const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
