@@ -3,7 +3,6 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const {
   enviarAsistenciaConfirmada,
-  enviarCancelacion,
   notificarCancelacionADaniela,
   notificarWaitlist
 } = require('../services/whatsapp');
@@ -80,7 +79,6 @@ router.post('/', express.json(), async (req, res) => {
       where: {
         cliente_telefono: telefono,
         estado: 'confirmado',
-        recordatorio_enviado: true,
         fecha: { gte: hoy }
       },
       include: { servicio: true },
@@ -92,26 +90,28 @@ router.post('/', express.json(), async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (respuesta === '1') {
+   if (respuesta === '1') {
       console.log(`   ✅ ${turno.cliente_nombre} confirmó asistencia (turno #${turno.id})`);
       await enviarAsistenciaConfirmada(turno);
-
     } else if (respuesta === '2') {
       console.log(`   ❌ ${turno.cliente_nombre} canceló (turno #${turno.id})`);
-
       await prisma.turno.update({
         where: { id: turno.id },
         data: { estado: 'cancelado' }
       });
-
-      await enviarCancelacion(turno);
       await notificarCancelacionADaniela(turno);
       await procesarWaitlist(turno);
-
+      // Mensaje de cancelación con invitación a reagendar
+      const { enviarMensaje } = require('../services/whatsapp');
+      await enviarMensaje(turno.cliente_telefono,
+        `Entendemos ${turno.cliente_nombre}, cancelamos tu turno sin problema. 😊\n\n` +
+        `Cuando quieras volver a reservar, podés hacerlo desde acá:\n` +
+        `${process.env.FRONTEND_URL}\n\n` +
+        `¡Te esperamos pronto! 💅`
+      );
     } else {
-      console.log(`   ❓ Respuesta no reconocida: "${respuesta}"`);
+      console.log(`   ⚠️ Respuesta no reconocida: "${respuesta}"`);
     }
-
     res.sendStatus(200);
 
   } catch (error) {
