@@ -76,7 +76,8 @@ async function enviarAsistenciaConfirmada(turno) {
   const mensaje =
     `¡Perfecto ${turno.cliente_nombre}! ✅\n\n` +
     `Tu asistencia está confirmada para mañana a las ${turno.hora_inicio} hs.\n\n` +
-    `¡Te esperamos con todo listo! 💅`;
+    `¡Te esperamos en Patricios 1579, Ingeniero Maschwitz! 💅\n` +
+    `📍 https://maps.app.goo.gl/j6pj7FT76p2fyp6o8`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
 
