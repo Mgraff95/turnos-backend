@@ -155,4 +155,35 @@ router.post('/test-recordatorio/:turnoId', authAdmin, async (req, res, next) => 
   } catch (err) { next(err); }
 });
 
+// ── Admin: Cancelar turno ──────────────────────
+router.delete('/turnos/:id', authAdmin, async (req, res, next) => {
+  try {
+    const turno = await prisma.turno.findUnique({
+      where: { id: parseInt(req.params.id) },
+      include: { servicio: true }
+    });
+
+    if (!turno) return res.status(404).json({ error: 'Turno no encontrado' });
+    if (turno.estado !== 'confirmado') return res.status(400).json({ error: 'Solo se pueden cancelar turnos confirmados' });
+
+    await prisma.turno.update({
+      where: { id: turno.id },
+      data: { estado: 'cancelado' }
+    });
+
+    // Notificar al cliente por WhatsApp
+    const { enviarMensaje } = require('../services/whatsapp');
+    const fechaStr = new Date(turno.fecha).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+    await enviarMensaje(turno.cliente_telefono,
+      `Hola ${turno.cliente_nombre} 👋\n\n` +
+      `Tu turno del ${fechaStr} a las ${turno.hora_inicio} hs fue cancelado por el estudio.\n\n` +
+      `Podés reprogramarlo cuando quieras desde acá:\n` +
+      `${process.env.FRONTEND_URL}\n\n` +
+      `¡Disculpá los inconvenientes! 💅`
+    );
+
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
