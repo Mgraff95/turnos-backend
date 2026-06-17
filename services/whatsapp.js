@@ -47,13 +47,26 @@ async function enviarWhatsApp(telefono, mensaje) {
 // ── Confirmación de turno ──────────────────────────────
 async function enviarConfirmacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
-  const mensaje =
+  let mensaje =
     `¡Hola ${turno.cliente_nombre}! 🎉\n\n` +
     `Tu turno está confirmado:\n` +
     `📅 ${fechaStr}\n` +
     `⏰ ${turno.hora_inicio} hs\n` +
-    `💅 ${turno.servicio.nombre}\n\n` +
-    `Podés ver o modificar tu turno en:\n` +
+    `💅 ${turno.servicio.nombre}\n`;
+
+  // Si el turno tiene extras, los listamos y mostramos el total
+  if (turno.extras && turno.extras.length > 0) {
+    mensaje += `\n✨ Extras:\n`;
+    for (const ex of turno.extras) {
+      mensaje += `   • ${ex.nombre} (+$${Number(ex.precio_pesos)})\n`;
+    }
+    const totalExtras = turno.extras.reduce((s, e) => s + Number(e.precio_pesos), 0);
+    const total = Number(turno.servicio.precio_pesos) + totalExtras;
+    mensaje += `💰 Total: $${total}\n`;
+  }
+
+  mensaje +=
+    `\nPodés ver o modificar tu turno en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }

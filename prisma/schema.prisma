@@ -53,6 +53,23 @@ model BloqueCerrado {
   @@map("bloques_cerrados")
 }
 
+// Extras / adicionales ofrecibles sobre un servicio.
+// Cada extra tiene su propio precio y tiempo, y se asigna a uno o varios servicios.
+model Extra {
+  id                  Int      @id @default(autoincrement())
+  nombre              String
+  descripcion         String?
+  precio_pesos        Decimal  @db.Decimal(10, 2)
+  minutos_adicionales Int      @default(0)
+  servicios_ids       Int[]    @default([]) // IDs de servicios que ofrecen este extra
+  destacado           Boolean  @default(false)
+  activo              Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@map("extras")
+}
+
 model Turno {
   id                Int      @id @default(autoincrement())
   cliente_nombre    String
@@ -65,6 +82,7 @@ model Turno {
   estado            String   @default("confirmado")
   pago_realizado    Boolean  @default(false)
   pago_monto        Decimal? @db.Decimal(10, 2)
+  extras_ids        Int[]    @default([]) // IDs de extras elegidos para este turno
   token_acceso      String   @default(uuid())
   token_expires_at  DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
   origen            String   @default("web") // web | manual

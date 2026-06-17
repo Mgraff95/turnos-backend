@@ -19,6 +19,7 @@ app.use(express.json());
 
 // ── Rutas ──────────────────────────────────────
 app.use('/api/servicios', require('./routes/servicios'));
+app.use('/api/extras', require('./routes/extras'));
 app.use('/api/horarios', require('./routes/horarios'));
 app.use('/api/turnos', require('./routes/turnos'));
 app.use('/api/admin', require('./routes/admin'));

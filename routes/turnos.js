@@ -17,10 +17,28 @@ function determinarFranja(horaInicio) {
   return hora < 14 ? 'manana' : 'tarde';
 }
 
+// ── Resolver extras válidos para un servicio ───
+// Devuelve solo los extras activos que efectivamente se ofrecen para ese servicio.
+async function resolverExtras(extrasInput, servicioId) {
+  if (!extrasInput) return [];
+  const arr = Array.isArray(extrasInput)
+    ? extrasInput
+    : String(extrasInput).split(',');
+  const ids = arr.map(n => parseInt(n)).filter(n => !isNaN(n));
+  if (ids.length === 0) return [];
+  return prisma.extra.findMany({
+    where: {
+      id: { in: ids },
+      activo: true,
+      servicios_ids: { has: servicioId }
+    }
+  });
+}
+
 // ── POST /api/turnos → Crear turno ─────────────
 router.post('/', async (req, res, next) => {
   try {
-    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio } = req.body;
+    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio, extras } = req.body;
 
     if (!nombre || !apellido || !telefono || !servicio_id || !fecha || !hora_inicio) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
@@ -38,7 +56,12 @@ router.post('/', async (req, res, next) => {
       return res.status(404).json({ error: 'Servicio no encontrado' });
     }
 
-    const horaFin = calcularHoraFin(hora_inicio, servicio.duracion_minutos);
+    // Resolver extras elegidos (suman tiempo y precio)
+    const extrasValidos = await resolverExtras(extras, parseInt(servicio_id));
+    const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
+    const duracionTotal = servicio.duracion_minutos + minutosExtra;
+
+    const horaFin = calcularHoraFin(hora_inicio, duracionTotal);
 
     const tokenExpires = new Date();
     tokenExpires.setDate(tokenExpires.getDate() + 30);
@@ -51,10 +74,14 @@ router.post('/', async (req, res, next) => {
       fecha: new Date(fecha),
       hora_inicio,
       hora_fin: horaFin,
+      extras_ids: extrasValidos.map(e => e.id),
       estado: 'confirmado',
       token_acceso: uuidv4(),
       token_expires_at: tokenExpires
     });
+
+    // Adjuntar los extras al objeto para el mensaje de WhatsApp
+    turno.extras = extrasValidos;
 
     enviarConfirmacion(turno).catch(err =>
       console.error('Error enviando WA de confirmación:', err.message)
@@ -190,9 +217,11 @@ router.get('/cancelar', async (req, res, next) => {
 });
 
 // ── GET /api/turnos/disponibilidad/:fecha/:servicio_id ─
+// Acepta ?extras=1,2,3 para sumar el tiempo de los extras a la duración.
 router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
   try {
     const { fecha, servicio_id } = req.params;
+    const { extras } = req.query;
 
     const servicio = await prisma.servicio.findUnique({
       where: { id: parseInt(servicio_id) }
@@ -201,9 +230,12 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
       return res.status(404).json({ error: 'Servicio no encontrado' });
     }
 
+    const extrasValidos = await resolverExtras(extras, parseInt(servicio_id));
+    const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
+
     const horarios = await obtenerHorariosDisponibles(
       new Date(fecha),
-      servicio.duracion_minutos,
+      servicio.duracion_minutos + minutosExtra,
       parseInt(servicio_id)
     );
 
