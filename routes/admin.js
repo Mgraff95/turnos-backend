@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { authAdmin } = require('../middleware/auth');
-const { calcularHoraFin, verificarYReservar } = require('../lib/availability');
+const { calcularHoraFin, verificarYReservar, verificarYActualizar } = require('../lib/availability');
 const { enviarConfirmacion } = require('../services/whatsapp');
 
 // ── Login admin ────────────────────────────────
@@ -111,6 +111,50 @@ router.post('/turnos', authAdmin, async (req, res, next) => {
     );
 
     res.status(201).json({ success: true, turno });
+  } catch (err) {
+    if (err.message === 'HORARIO_NO_DISPONIBLE') {
+      return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
+    }
+    next(err);
+  }
+});
+
+// ── Admin: Editar turno ────────────────────────
+router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
+  try {
+    const turnoId = parseInt(req.params.id);
+    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio } = req.body;
+
+    const turnoActual = await prisma.turno.findUnique({ where: { id: turnoId } });
+    if (!turnoActual) return res.status(404).json({ error: 'Turno no encontrado' });
+    if (turnoActual.estado !== 'confirmado') {
+      return res.status(400).json({ error: 'Solo se pueden editar turnos confirmados' });
+    }
+
+    if (!nombre || !apellido || !telefono || !servicio_id || !fecha || !hora_inicio) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    const telLimpio = telefono.replace(/\D/g, '');
+
+    const servicio = await prisma.servicio.findUnique({
+      where: { id: parseInt(servicio_id) }
+    });
+    if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    const horaFin = calcularHoraFin(hora_inicio, servicio.duracion_minutos);
+
+    const turno = await verificarYActualizar(turnoId, {
+      cliente_nombre: nombre.trim(),
+      cliente_apellido: apellido.trim(),
+      cliente_telefono: telLimpio,
+      servicio_id: parseInt(servicio_id),
+      fecha: new Date(fecha),
+      hora_inicio,
+      hora_fin: horaFin
+    });
+
+    res.json({ success: true, turno });
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
       return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
