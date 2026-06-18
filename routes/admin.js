@@ -8,6 +8,23 @@ const { authAdmin } = require('../middleware/auth');
 const { calcularHoraFin, verificarYReservar, verificarYActualizar } = require('../lib/availability');
 const { enviarConfirmacion } = require('../services/whatsapp');
 
+// Adjunta a cada turno el detalle de sus extras (nombre, precio, minutos),
+// resolviendo los extras_ids con una sola consulta para toda la lista.
+async function adjuntarExtras(turnos) {
+  const lista = Array.isArray(turnos) ? turnos : [turnos];
+  const todosIds = [...new Set(lista.flatMap(t => t.extras_ids || []))];
+  if (todosIds.length === 0) {
+    lista.forEach(t => { t.extras = []; });
+    return turnos;
+  }
+  const extras = await prisma.extra.findMany({ where: { id: { in: todosIds } } });
+  const mapa = new Map(extras.map(e => [e.id, e]));
+  lista.forEach(t => {
+    t.extras = (t.extras_ids || []).map(id => mapa.get(id)).filter(Boolean);
+  });
+  return turnos;
+}
+
 // ── Login admin ────────────────────────────────
 router.post('/login', async (req, res, next) => {
   try {
@@ -64,6 +81,8 @@ router.get('/turnos', authAdmin, async (req, res, next) => {
       include: { servicio: true },
       orderBy: [{ fecha: 'asc' }, { hora_inicio: 'asc' }]
     });
+
+    await adjuntarExtras(turnos);
     res.json(turnos);
   } catch (err) { next(err); }
 });
