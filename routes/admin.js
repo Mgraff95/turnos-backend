@@ -161,6 +161,12 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
     });
     if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
 
+    // Detectar qué cambió (servicio, fecha u horario) comparando con el turno actual
+    const fechaAntes = turnoActual.fecha.toISOString().split('T')[0];
+    const cambioServicio = parseInt(servicio_id) !== turnoActual.servicio_id;
+    const cambioFecha = fecha !== fechaAntes;
+    const cambioHora = hora_inicio !== turnoActual.hora_inicio;
+
     const horaFin = calcularHoraFin(hora_inicio, servicio.duracion_minutos);
 
     const turno = await verificarYActualizar(turnoId, {
@@ -172,6 +178,36 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
       hora_inicio,
       hora_fin: horaFin
     });
+
+    // Si cambió el servicio, la fecha o el horario, avisar al cliente por WhatsApp
+    if (cambioServicio || cambioFecha || cambioHora) {
+      const { enviarMensaje } = require('../services/whatsapp');
+
+      const cambios = [];
+      if (cambioServicio) cambios.push('el servicio');
+      if (cambioFecha) cambios.push('la fecha');
+      if (cambioHora) cambios.push('el horario');
+
+      let queCambio;
+      if (cambios.length === 1) queCambio = cambios[0];
+      else if (cambios.length === 2) queCambio = `${cambios[0]} y ${cambios[1]}`;
+      else queCambio = `${cambios.slice(0, -1).join(', ')} y ${cambios[cambios.length - 1]}`;
+
+      const fechaStr = new Date(turno.fecha).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+
+      const mensaje =
+        `Hola ${turno.cliente_nombre} 👋\n\n` +
+        `Te avisamos que ${queCambio} de tu turno fue modificado por el estudio.\n\n` +
+        `Tu turno queda así:\n` +
+        `📅 ${fechaStr}\n` +
+        `⏰ ${turno.hora_inicio} hs\n` +
+        `💅 ${turno.servicio.nombre}\n\n` +
+        `Cualquier duda, escribinos. ¡Te esperamos! 💅`;
+
+      enviarMensaje(turno.cliente_telefono, mensaje).catch(err =>
+        console.error('Error enviando WA de modificación (admin):', err.message)
+      );
+    }
 
     res.json({ success: true, turno });
   } catch (err) {
