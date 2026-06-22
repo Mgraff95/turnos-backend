@@ -2,8 +2,25 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
-const { obtenerHorariosDisponibles, calcularHoraFin, verificarYReservar } = require('../lib/availability');
-const { enviarConfirmacion, enviarCancelacion, enviarModificacion, enviarAsistenciaConfirmada, notificarCancelacionADaniela, notificarWaitlist, notificarTurnoTomadoWaitlist } = require('../services/whatsapp');
+const {
+  obtenerHorariosDisponibles,
+  obtenerHorariosDisponiblesBloque,
+  calcularHoraFin,
+  verificarYReservar,
+  verificarYReservarBloque
+} = require('../lib/availability');
+const {
+  enviarConfirmacion,
+  enviarConfirmacionGrupo,
+  enviarCancelacion,
+  enviarCancelacionGrupo,
+  enviarModificacion,
+  enviarAsistenciaConfirmada,
+  notificarCancelacionADaniela,
+  notificarCancelacionGrupoADaniela,
+  notificarWaitlist,
+  notificarTurnoTomadoWaitlist
+} = require('../services/whatsapp');
 
 // ── Validar teléfono argentino (10 dígitos) ────
 function validarTelefono(tel) {
@@ -35,7 +52,23 @@ async function resolverExtras(extrasInput, servicioId) {
   });
 }
 
-// ── POST /api/turnos → Crear turno ─────────────
+// ── Notificar/desactivar waitlist para las franjas de un turno tomado ──
+async function procesarWaitlistTomado(fecha, franja, turnoParaNotificar) {
+  const waitlistMatch = await prisma.waitlist.findFirst({
+    where: { fecha, franja, activo: true, notificado: true }
+  });
+  if (waitlistMatch) {
+    notificarTurnoTomadoWaitlist(turnoParaNotificar).catch(err =>
+      console.error('Error notificando waitlist a Daniela:', err.message)
+    );
+    await prisma.waitlist.updateMany({
+      where: { fecha, franja, activo: true },
+      data: { activo: false }
+    }).catch(() => {});
+  }
+}
+
+// ── POST /api/turnos → Crear turno (1 servicio) ─────────────
 router.post('/', async (req, res, next) => {
   try {
     const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio, extras } = req.body;
@@ -89,23 +122,109 @@ router.post('/', async (req, res, next) => {
 
     // Verificar si este turno cubre un slot del waitlist → notificar a Daniela
     const franja = determinarFranja(turno.hora_inicio);
-    const waitlistMatch = await prisma.waitlist.findFirst({
-      where: { fecha: turno.fecha, franja, activo: true, notificado: true }
-    });
-    if (waitlistMatch) {
-      notificarTurnoTomadoWaitlist(turno).catch(err =>
-        console.error('Error notificando waitlist a Daniela:', err.message)
-      );
-      prisma.waitlist.updateMany({
-        where: { fecha: turno.fecha, franja, activo: true },
-        data: { activo: false }
-      }).catch(() => {});
-    }
+    await procesarWaitlistTomado(turno.fecha, franja, turno);
 
     res.status(201).json({ id: turno.id, token: turno.token_acceso, turno, success: true });
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
       return res.status(409).json({ error: 'Ese horario ya no está disponible. Por favor elegí otro.' });
+    }
+    next(err);
+  }
+});
+
+// ── POST /api/turnos/multi → Crear reserva múltiple (bloque continuo) ──
+// body: { nombre, apellido, telefono, fecha, hora_inicio,
+//         servicios: [ { servicio_id, extras: [ids] }, ... ] }
+router.post('/multi', async (req, res, next) => {
+  try {
+    const { nombre, apellido, telefono, fecha, hora_inicio, servicios } = req.body;
+
+    if (!nombre || !apellido || !telefono || !fecha || !hora_inicio) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+    if (!Array.isArray(servicios) || servicios.length < 2) {
+      return res.status(400).json({ error: 'Una reserva múltiple necesita al menos 2 servicios' });
+    }
+
+    const telLimpio = validarTelefono(telefono);
+    if (!telLimpio) {
+      return res.status(400).json({ error: 'Teléfono inválido. Ingresá 10 dígitos (ej: 1123456789)' });
+    }
+
+    // Resolver cada servicio + sus extras, en el orden enviado
+    const items = [];
+    for (const item of servicios) {
+      const sid = parseInt(item.servicio_id);
+      const servicio = await prisma.servicio.findUnique({ where: { id: sid } });
+      if (!servicio || !servicio.activo) {
+        return res.status(404).json({ error: `Servicio ${item.servicio_id} no encontrado` });
+      }
+      const extrasValidos = await resolverExtras(item.extras, sid);
+      const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
+      items.push({
+        servicio,
+        extras: extrasValidos,
+        duracion: servicio.duracion_minutos + minutosExtra
+      });
+    }
+
+    // Encadenar los sub-turnos uno detrás del otro (pegados, sin espacio interno)
+    const grupoReserva = uuidv4();
+    const tokenExpires = new Date();
+    tokenExpires.setDate(tokenExpires.getDate() + 30);
+
+    let cursor = hora_inicio;
+    const turnosData = [];
+    items.forEach((item, idx) => {
+      const inicio = cursor;
+      const fin = calcularHoraFin(inicio, item.duracion);
+      turnosData.push({
+        cliente_nombre: nombre.trim(),
+        cliente_apellido: apellido.trim(),
+        cliente_telefono: telLimpio,
+        servicio_id: item.servicio.id,
+        fecha: new Date(fecha),
+        hora_inicio: inicio,
+        hora_fin: fin,
+        extras_ids: item.extras.map(e => e.id),
+        grupo_reserva: grupoReserva,
+        orden_en_grupo: idx + 1,
+        estado: 'confirmado',
+        token_acceso: uuidv4(),
+        token_expires_at: tokenExpires
+      });
+      cursor = fin;
+    });
+
+    const rangoInicio = hora_inicio;
+    const rangoFin = cursor;
+
+    const turnosCreados = await verificarYReservarBloque(turnosData, rangoInicio, rangoFin);
+
+    // Adjuntar extras a cada turno creado (mismo orden) para el mensaje
+    turnosCreados.forEach((t, idx) => { t.extras = items[idx].extras; });
+
+    enviarConfirmacionGrupo(turnosCreados).catch(err =>
+      console.error('Error enviando WA de confirmación de grupo:', err.message)
+    );
+
+    // Waitlist: notificar por cada franja única cubierta por el bloque
+    const franjasCubiertas = [...new Set(turnosCreados.map(t => determinarFranja(t.hora_inicio)))];
+    for (const franja of franjasCubiertas) {
+      await procesarWaitlistTomado(new Date(fecha), franja, turnosCreados[0]);
+    }
+
+    res.status(201).json({
+      success: true,
+      grupo_reserva: grupoReserva,
+      hora_inicio: rangoInicio,
+      hora_fin: rangoFin,
+      turnos: turnosCreados
+    });
+  } catch (err) {
+    if (err.message === 'HORARIO_NO_DISPONIBLE') {
+      return res.status(409).json({ error: 'Ese horario ya no está disponible para todos los servicios. Por favor elegí otro.' });
     }
     next(err);
   }
@@ -173,7 +292,56 @@ router.get('/cancelar', async (req, res, next) => {
       return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=El+turno+ya+no+está+activo`);
     }
 
-    // Verificar >= 24h antes
+    // ── Reserva múltiple: cancelar TODO el bloque ──
+    if (turno.grupo_reserva) {
+      const grupo = await prisma.turno.findMany({
+        where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
+        include: { servicio: true },
+        orderBy: { orden_en_grupo: 'asc' }
+      });
+
+      // El control de 24h se hace contra el primer turno del bloque
+      const primero = grupo[0] || turno;
+      const ahora = new Date();
+      const fechaTurno = new Date(`${primero.fecha.toISOString().split('T')[0]}T${primero.hora_inicio}`);
+      const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
+      if (horasRestantes < 24) {
+        return res.redirect(`${frontendUrl}/respuesta?estado=error&msg=Solo+podés+cancelar+hasta+24hs+antes`);
+      }
+
+      await prisma.turno.updateMany({
+        where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
+        data: { estado: 'cancelado' }
+      });
+
+      console.log(`❌ ${primero.cliente_nombre} canceló su reserva múltiple (grupo ${turno.grupo_reserva})`);
+
+      enviarCancelacionGrupo(grupo).catch(err =>
+        console.error('Error enviando WA cancelación de grupo:', err.message)
+      );
+      notificarCancelacionGrupoADaniela(grupo).catch(err =>
+        console.error('Error notificando cancelación de grupo a Daniela:', err.message)
+      );
+
+      // Notificar waitlist por cada franja liberada
+      const franjas = [...new Set(grupo.map(t => determinarFranja(t.hora_inicio)))];
+      for (const franja of franjas) {
+        const esperando = await prisma.waitlist.findMany({
+          where: { fecha: primero.fecha, franja, activo: true, notificado: false },
+          include: { servicio: true }
+        });
+        for (const entrada of esperando) {
+          const enviado = await notificarWaitlist(entrada, primero.hora_inicio);
+          if (enviado) {
+            await prisma.waitlist.update({ where: { id: entrada.id }, data: { notificado: true } });
+          }
+        }
+      }
+
+      return res.redirect(`${frontendUrl}/respuesta?estado=cancelado`);
+    }
+
+    // ── Turno simple ──
     const ahora = new Date();
     const fechaTurno = new Date(`${turno.fecha.toISOString().split('T')[0]}T${turno.hora_inicio}`);
     const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
@@ -243,6 +411,33 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── POST /api/turnos/disponibilidad-multi → disponibilidad de un bloque ──
+// body: { fecha, servicios: [ { servicio_id, extras: [ids] }, ... ] }
+router.post('/disponibilidad-multi', async (req, res, next) => {
+  try {
+    const { fecha, servicios } = req.body;
+    if (!fecha || !Array.isArray(servicios) || servicios.length === 0) {
+      return res.status(400).json({ error: 'Faltan datos (fecha y servicios)' });
+    }
+
+    // Sumar la duración de todos los servicios + sus extras válidos
+    let duracionTotal = 0;
+    for (const item of servicios) {
+      const sid = parseInt(item.servicio_id);
+      const servicio = await prisma.servicio.findUnique({ where: { id: sid } });
+      if (!servicio) {
+        return res.status(404).json({ error: `Servicio ${item.servicio_id} no encontrado` });
+      }
+      const extrasValidos = await resolverExtras(item.extras, sid);
+      const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
+      duracionTotal += servicio.duracion_minutos + minutosExtra;
+    }
+
+    const horarios = await obtenerHorariosDisponiblesBloque(new Date(fecha), duracionTotal);
+    res.json({ fecha, duracion_total: duracionTotal, horarios });
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/turnos/mistura/:telefono/:apellido ─
 router.get('/mistura/:telefono/:apellido', async (req, res, next) => {
   try {
@@ -285,6 +480,12 @@ router.patch('/:id', async (req, res, next) => {
 
     if (turno.estado !== 'confirmado') {
       return res.status(400).json({ error: 'Solo se pueden modificar turnos confirmados' });
+    }
+
+    // Por ahora, los turnos que forman parte de una reserva múltiple no se editan
+    // individualmente (mover uno desencadena el resto). Se cancela y se reserva de nuevo.
+    if (turno.grupo_reserva) {
+      return res.status(400).json({ error: 'Este turno es parte de una reserva múltiple. Para cambiarlo, cancelalo y reservá de nuevo.' });
     }
 
     const ahora = new Date();
@@ -351,6 +552,35 @@ router.delete('/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Solo se pueden cancelar turnos confirmados' });
     }
 
+    // ── Reserva múltiple: cancelar TODO el bloque ──
+    if (turno.grupo_reserva) {
+      const grupo = await prisma.turno.findMany({
+        where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
+        include: { servicio: true },
+        orderBy: { orden_en_grupo: 'asc' }
+      });
+      const primero = grupo[0] || turno;
+
+      const ahora = new Date();
+      const fechaTurno = new Date(`${primero.fecha.toISOString().split('T')[0]}T${primero.hora_inicio}`);
+      const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
+      if (horasRestantes < 24) {
+        return res.status(400).json({ error: 'Solo podés cancelar hasta 24h antes del turno' });
+      }
+
+      await prisma.turno.updateMany({
+        where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
+        data: { estado: 'cancelado' }
+      });
+
+      enviarCancelacionGrupo(grupo).catch(err =>
+        console.error('Error enviando WA de cancelación de grupo:', err.message)
+      );
+
+      return res.json({ success: true });
+    }
+
+    // ── Turno simple ──
     const ahora = new Date();
     const fechaTurno = new Date(`${turno.fecha.toISOString().split('T')[0]}T${turno.hora_inicio}`);
     const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
@@ -360,7 +590,7 @@ router.delete('/:id', async (req, res, next) => {
     }
 
     await prisma.turno.update({
-      where: { id: parseInt(id) },
+      where: { id: turno.id },
       data: { estado: 'cancelado' }
     });
 
