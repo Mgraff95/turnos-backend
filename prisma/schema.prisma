@@ -1,6 +1,7 @@
 // ============================================
 // TOMADOR DE TURNOS - Schema Prisma v2
 // Múltiples rangos horarios por día
+// + Reservas múltiples (varios servicios en un bloque continuo)
 // ============================================
 
 generator client {
@@ -83,6 +84,8 @@ model Turno {
   pago_realizado    Boolean  @default(false)
   pago_monto        Decimal? @db.Decimal(10, 2)
   extras_ids        Int[]    @default([]) // IDs de extras elegidos para este turno
+  grupo_reserva     String?  // UUID compartido entre turnos de una misma reserva múltiple (null = turno simple)
+  orden_en_grupo    Int?     // posición del servicio dentro del bloque (1, 2, 3...)
   token_acceso      String   @default(uuid())
   token_expires_at  DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
   origen            String   @default("web") // web | manual
@@ -95,6 +98,7 @@ model Turno {
   @@index([fecha, estado])
   @@index([cliente_telefono, cliente_apellido])
   @@index([token_acceso])
+  @@index([grupo_reserva])
   @@map("turnos")
 }
 
