@@ -90,7 +90,7 @@ router.get('/turnos', authAdmin, async (req, res, next) => {
 // ── Admin: Crear turno manual ──────────────────
 router.post('/turnos', authAdmin, async (req, res, next) => {
   try {
-    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio } = req.body;
+    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio, notificar } = req.body;
 
     if (!nombre || !apellido || !telefono || !servicio_id || !fecha || !hora_inicio) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
@@ -124,12 +124,16 @@ router.post('/turnos', authAdmin, async (req, res, next) => {
       origen: 'manual'
     });
 
-    // Enviar WhatsApp (no bloqueante)
-    enviarConfirmacion(turno).catch(err =>
-      console.error('Error enviando WA:', err.message)
-    );
+    // Enviar WhatsApp (no bloqueante), salvo que el admin haya destildado la notificación.
+    // Default: notificar (si no viene el campo, o viene true, se notifica igual que antes).
+    const debeNotificar = notificar !== false;
+    if (debeNotificar) {
+      enviarConfirmacion(turno).catch(err =>
+        console.error('Error enviando WA:', err.message)
+      );
+    }
 
-    res.status(201).json({ success: true, turno });
+    res.status(201).json({ success: true, turno, notificado: debeNotificar });
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
       return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
