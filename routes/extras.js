@@ -31,7 +31,7 @@ router.get('/servicio/:servicioId', async (req, res, next) => {
 // ── Admin: crear extra ──────────────────────────
 router.post('/', authAdmin, async (req, res, next) => {
   try {
-    const { nombre, descripcion, precio_pesos, minutos_adicionales, servicios_ids, destacado } = req.body;
+    const { nombre, descripcion, precio_pesos, minutos_adicionales, servicios_ids, destacado, precio_variable } = req.body;
 
     if (!nombre || precio_pesos === undefined || precio_pesos === '') {
       return res.status(400).json({ error: 'Faltan campos: nombre, precio_pesos' });
@@ -42,6 +42,7 @@ router.post('/', authAdmin, async (req, res, next) => {
         nombre: nombre.trim(),
         descripcion: descripcion ? descripcion.trim() : null,
         precio_pesos: parseFloat(precio_pesos),
+        precio_variable: !!precio_variable,
         minutos_adicionales: parseInt(minutos_adicionales) || 0,
         servicios_ids: Array.isArray(servicios_ids) ? servicios_ids.map(n => parseInt(n)) : [],
         destacado: !!destacado
@@ -54,12 +55,13 @@ router.post('/', authAdmin, async (req, res, next) => {
 // ── Admin: actualizar extra ─────────────────────
 router.patch('/:id', authAdmin, async (req, res, next) => {
   try {
-    const { nombre, descripcion, precio_pesos, minutos_adicionales, servicios_ids, destacado, activo } = req.body;
+    const { nombre, descripcion, precio_pesos, minutos_adicionales, servicios_ids, destacado, activo, precio_variable } = req.body;
 
     const data = {};
     if (nombre !== undefined) data.nombre = nombre.trim();
     if (descripcion !== undefined) data.descripcion = descripcion ? descripcion.trim() : null;
     if (precio_pesos !== undefined && precio_pesos !== '') data.precio_pesos = parseFloat(precio_pesos);
+    if (precio_variable !== undefined) data.precio_variable = !!precio_variable;
     if (minutos_adicionales !== undefined) data.minutos_adicionales = parseInt(minutos_adicionales) || 0;
     if (servicios_ids !== undefined) data.servicios_ids = Array.isArray(servicios_ids) ? servicios_ids.map(n => parseInt(n)) : [];
     if (destacado !== undefined) data.destacado = !!destacado;
