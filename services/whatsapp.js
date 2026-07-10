@@ -57,12 +57,21 @@ async function enviarConfirmacion(turno) {
   // Si el turno tiene extras, los listamos y mostramos el total
   if (turno.extras && turno.extras.length > 0) {
     mensaje += `\n✨ Extras:\n`;
+    let hayVariable = false;
     for (const ex of turno.extras) {
-      mensaje += `   • ${ex.nombre} (+$${Number(ex.precio_pesos)})\n`;
+      if (ex.precio_variable) {
+        hayVariable = true;
+        mensaje += `   • ${ex.nombre} (desde $${Number(ex.precio_pesos)})\n`;
+      } else {
+        mensaje += `   • ${ex.nombre} (+$${Number(ex.precio_pesos)})\n`;
+      }
     }
     const totalExtras = turno.extras.reduce((s, e) => s + Number(e.precio_pesos), 0);
     const total = Number(turno.servicio.precio_pesos) + totalExtras;
-    mensaje += `💰 Total: $${total}\n`;
+    mensaje += hayVariable ? `💰 Total (desde): $${total}\n` : `💰 Total: $${total}\n`;
+    if (hayVariable) {
+      mensaje += `💡 Los precios "desde" son de referencia y pueden variar según la complejidad del diseño.\n`;
+    }
   }
 
   mensaje +=
@@ -81,13 +90,19 @@ async function enviarConfirmacionGrupo(turnos) {
   const fechaStr = formatearFecha(primero.fecha);
 
   let total = 0;
+  let hayVariable = false;
   let cuerpo = '';
   for (const t of turnos) {
     cuerpo += `\n⏰ ${t.hora_inicio} hs · 💅 ${t.servicio.nombre}`;
     total += Number(t.servicio.precio_pesos);
     if (t.extras && t.extras.length > 0) {
       for (const ex of t.extras) {
-        cuerpo += `\n   ✨ ${ex.nombre} (+$${Number(ex.precio_pesos)})`;
+        if (ex.precio_variable) {
+          hayVariable = true;
+          cuerpo += `\n   ✨ ${ex.nombre} (desde $${Number(ex.precio_pesos)})`;
+        } else {
+          cuerpo += `\n   ✨ ${ex.nombre} (+$${Number(ex.precio_pesos)})`;
+        }
         total += Number(ex.precio_pesos);
       }
     }
@@ -99,7 +114,7 @@ async function enviarConfirmacionGrupo(turnos) {
     `📅 ${fechaStr}\n` +
     `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
     cuerpo + `\n\n` +
-    `💰 Total: $${total}\n\n` +
+    (hayVariable ? `💰 Total (desde): $${total}\n💡 Los precios "desde" son de referencia y pueden variar según la complejidad del diseño.\n\n` : `💰 Total: $${total}\n\n`) +
     `Podés ver o cancelar tus turnos en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
 
