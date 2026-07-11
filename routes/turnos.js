@@ -5,9 +5,12 @@ const prisma = require('../lib/prisma');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
+  resolverBloqueConIntercalados,
   calcularHoraFin,
   verificarYReservar,
-  verificarYReservarBloque
+  verificarYReservarBloque,
+  horaAMinutos,
+  minutosAHora
 } = require('../lib/availability');
 const {
   enviarConfirmacion,
@@ -136,6 +139,10 @@ router.post('/', async (req, res, next) => {
 // ── POST /api/turnos/multi → Crear reserva múltiple (bloque continuo) ──
 // body: { nombre, apellido, telefono, fecha, hora_inicio,
 //         servicios: [ { servicio_id, extras: [ids] }, ... ] }
+//
+// Los servicios que sean compatibles entre sí (ej. PRP + Pies, configurado en el
+// servicio ancla como intercalable/servicios_compatibles) NO se encadenan uno detrás
+// del otro: comparten el mismo horario, sin sumar tiempo al bloque.
 router.post('/multi', async (req, res, next) => {
   try {
     const { nombre, apellido, telefono, fecha, hora_inicio, servicios } = req.body;
@@ -169,16 +176,51 @@ router.post('/multi', async (req, res, next) => {
       });
     }
 
-    // Encadenar los sub-turnos uno detrás del otro (pegados, sin espacio interno)
+    // Separar los servicios en "secuenciales" (se encadenan uno atrás del otro) e
+    // "intercalados" (comparten horario con su servicio ancla, sin sumar tiempo)
+    const { secuenciales, intercalados, duracionEfectivaPorId } = resolverBloqueConIntercalados(items);
+
     const grupoReserva = uuidv4();
     const tokenExpires = new Date();
     tokenExpires.setDate(tokenExpires.getDate() + 30);
 
     let cursor = hora_inicio;
+    let ordenGrupo = 0;
     const turnosData = [];
-    items.forEach((item, idx) => {
+    const horarioPorServicioId = {};
+
+    // 1. Encadenar los secuenciales (usando la duración "efectiva" de cada uno,
+    //    que para un ancla ya viene estirada para cubrir a su intercalado)
+    secuenciales.forEach(item => {
       const inicio = cursor;
+      const finReal = calcularHoraFin(inicio, item.duracion); // hora_fin propia del servicio
+      const finEfectivo = calcularHoraFin(inicio, duracionEfectivaPorId[item.servicio.id]);
+      horarioPorServicioId[item.servicio.id] = { inicio, fin: finEfectivo };
+      ordenGrupo++;
+      turnosData.push({
+        cliente_nombre: nombre.trim(),
+        cliente_apellido: apellido.trim(),
+        cliente_telefono: telLimpio,
+        servicio_id: item.servicio.id,
+        fecha: new Date(fecha),
+        hora_inicio: inicio,
+        hora_fin: finReal,
+        extras_ids: item.extras.map(e => e.id),
+        grupo_reserva: grupoReserva,
+        orden_en_grupo: ordenGrupo,
+        estado: 'confirmado',
+        token_acceso: uuidv4(),
+        token_expires_at: tokenExpires
+      });
+      cursor = finEfectivo;
+    });
+
+    // 2. Ubicar los intercalados: comparten el horario de su ancla (con el offset configurado)
+    intercalados.forEach(({ item, anclaServicioId, offsetMin }) => {
+      const anclaHorario = horarioPorServicioId[anclaServicioId];
+      const inicio = minutosAHora(horaAMinutos(anclaHorario.inicio) + offsetMin);
       const fin = calcularHoraFin(inicio, item.duracion);
+      ordenGrupo++;
       turnosData.push({
         cliente_nombre: nombre.trim(),
         cliente_apellido: apellido.trim(),
@@ -189,21 +231,26 @@ router.post('/multi', async (req, res, next) => {
         hora_fin: fin,
         extras_ids: item.extras.map(e => e.id),
         grupo_reserva: grupoReserva,
-        orden_en_grupo: idx + 1,
+        orden_en_grupo: ordenGrupo,
         estado: 'confirmado',
         token_acceso: uuidv4(),
         token_expires_at: tokenExpires
       });
-      cursor = fin;
     });
 
     const rangoInicio = hora_inicio;
-    const rangoFin = cursor;
+    const rangoFin = cursor; // fin del último secuencial; los intercalados siempre terminan antes o igual
 
     const turnosCreados = await verificarYReservarBloque(turnosData, rangoInicio, rangoFin);
 
-    // Adjuntar extras a cada turno creado (mismo orden) para el mensaje
-    turnosCreados.forEach((t, idx) => { t.extras = items[idx].extras; });
+    // Ordenar cronológicamente para el mensaje de WhatsApp y la respuesta
+    turnosCreados.sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio));
+
+    // Adjuntar extras a cada turno creado (buscando por servicio_id, ya que el orden pudo cambiar)
+    turnosCreados.forEach(t => {
+      const item = items.find(i => i.servicio.id === t.servicio_id);
+      t.extras = item ? item.extras : [];
+    });
 
     enviarConfirmacionGrupo(turnosCreados).catch(err =>
       console.error('Error enviando WA de confirmación de grupo:', err.message)
@@ -413,6 +460,8 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
 
 // ── POST /api/turnos/disponibilidad-multi → disponibilidad de un bloque ──
 // body: { fecha, servicios: [ { servicio_id, extras: [ids] }, ... ] }
+// La duración total ya tiene en cuenta los servicios compatibles entre sí
+// (ej. PRP + Pies): esos no suman tiempo, comparten el horario del ancla.
 router.post('/disponibilidad-multi', async (req, res, next) => {
   try {
     const { fecha, servicios } = req.body;
@@ -420,8 +469,7 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
       return res.status(400).json({ error: 'Faltan datos (fecha y servicios)' });
     }
 
-    // Sumar la duración de todos los servicios + sus extras válidos
-    let duracionTotal = 0;
+    const items = [];
     for (const item of servicios) {
       const sid = parseInt(item.servicio_id);
       const servicio = await prisma.servicio.findUnique({ where: { id: sid } });
@@ -430,8 +478,14 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
       }
       const extrasValidos = await resolverExtras(item.extras, sid);
       const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
-      duracionTotal += servicio.duracion_minutos + minutosExtra;
+      items.push({
+        servicio,
+        extras: extrasValidos,
+        duracion: servicio.duracion_minutos + minutosExtra
+      });
     }
+
+    const { duracionTotal } = resolverBloqueConIntercalados(items);
 
     const horarios = await obtenerHorariosDisponiblesBloque(new Date(fecha), duracionTotal);
     res.json({ fecha, duracion_total: duracionTotal, horarios });
