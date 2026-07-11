@@ -61,6 +61,7 @@ model Extra {
   nombre              String
   descripcion         String?
   precio_pesos        Decimal  @db.Decimal(10, 2)
+  precio_variable     Boolean  @default(false)
   minutos_adicionales Int      @default(0)
   servicios_ids       Int[]    @default([]) // IDs de servicios que ofrecen este extra
   destacado           Boolean  @default(false)
