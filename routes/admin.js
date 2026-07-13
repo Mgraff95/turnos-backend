@@ -5,8 +5,16 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { authAdmin } = require('../middleware/auth');
-const { calcularHoraFin, verificarYReservar, verificarYActualizar } = require('../lib/availability');
-const { enviarConfirmacion } = require('../services/whatsapp');
+const {
+  calcularHoraFin,
+  verificarYReservar,
+  verificarYActualizar,
+  verificarYReservarBloque,
+  resolverBloqueConIntercalados,
+  horaAMinutos,
+  minutosAHora
+} = require('../lib/availability');
+const { enviarConfirmacion, enviarConfirmacionGrupo } = require('../services/whatsapp');
 
 // Adjunta a cada turno el detalle de sus extras (nombre, precio, minutos),
 // resolviendo los extras_ids con una sola consulta para toda la lista.
@@ -87,7 +95,7 @@ router.get('/turnos', authAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Admin: Crear turno manual ──────────────────
+// ── Admin: Crear turno manual (1 servicio) ─────
 router.post('/turnos', authAdmin, async (req, res, next) => {
   try {
     const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio, notificar } = req.body;
@@ -137,6 +145,127 @@ router.post('/turnos', authAdmin, async (req, res, next) => {
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
       return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
+    }
+    next(err);
+  }
+});
+
+// ── Admin: Crear turno manual con VARIOS servicios (bloque continuo) ──
+// body: { nombre, apellido, telefono, fecha, hora_inicio, servicios: [servicio_id, servicio_id, ...], notificar }
+// Reutiliza la misma lógica de intercalado que /api/turnos/multi (público): si dos
+// servicios elegidos son compatibles entre sí (ej. PRP + Pies), no se encadenan uno
+// detrás del otro — comparten horario, sin sumar tiempo al bloque.
+router.post('/turnos/multi', authAdmin, async (req, res, next) => {
+  try {
+    const { nombre, apellido, telefono, fecha, hora_inicio, servicios, notificar } = req.body;
+
+    if (!nombre || !apellido || !telefono || !fecha || !hora_inicio) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+    if (!Array.isArray(servicios) || servicios.length < 2) {
+      return res.status(400).json({ error: 'Un turno con varios servicios necesita al menos 2 servicios' });
+    }
+
+    const telLimpio = telefono.replace(/\D/g, '');
+
+    // Resolver cada servicio, en el orden enviado
+    const items = [];
+    for (const servicioIdRaw of servicios) {
+      const sid = parseInt(servicioIdRaw);
+      const servicio = await prisma.servicio.findUnique({ where: { id: sid } });
+      if (!servicio || !servicio.activo) {
+        return res.status(404).json({ error: `Servicio ${servicioIdRaw} no encontrado` });
+      }
+      items.push({ servicio, extras: [], duracion: servicio.duracion_minutos });
+    }
+
+    // Separar en secuenciales / intercalados (misma lógica que la reserva pública)
+    const { secuenciales, intercalados, duracionEfectivaPorId } = resolverBloqueConIntercalados(items);
+
+    const grupoReserva = uuidv4();
+    const tokenExpires = new Date();
+    tokenExpires.setDate(tokenExpires.getDate() + 30);
+
+    let cursor = hora_inicio;
+    let ordenGrupo = 0;
+    const turnosData = [];
+    const horarioPorServicioId = {};
+
+    // 1. Encadenar los secuenciales
+    secuenciales.forEach(item => {
+      const inicio = cursor;
+      const finReal = calcularHoraFin(inicio, item.duracion);
+      const finEfectivo = calcularHoraFin(inicio, duracionEfectivaPorId[item.servicio.id]);
+      horarioPorServicioId[item.servicio.id] = { inicio, fin: finEfectivo };
+      ordenGrupo++;
+      turnosData.push({
+        cliente_nombre: nombre.trim(),
+        cliente_apellido: apellido.trim(),
+        cliente_telefono: telLimpio,
+        servicio_id: item.servicio.id,
+        fecha: new Date(fecha),
+        hora_inicio: inicio,
+        hora_fin: finReal,
+        grupo_reserva: grupoReserva,
+        orden_en_grupo: ordenGrupo,
+        estado: 'confirmado',
+        token_acceso: uuidv4(),
+        token_expires_at: tokenExpires,
+        origen: 'manual'
+      });
+      cursor = finEfectivo;
+    });
+
+    // 2. Ubicar los intercalados: comparten horario con su ancla
+    intercalados.forEach(({ item, anclaServicioId, offsetMin }) => {
+      const anclaHorario = horarioPorServicioId[anclaServicioId];
+      const inicio = minutosAHora(horaAMinutos(anclaHorario.inicio) + offsetMin);
+      const fin = calcularHoraFin(inicio, item.duracion);
+      ordenGrupo++;
+      turnosData.push({
+        cliente_nombre: nombre.trim(),
+        cliente_apellido: apellido.trim(),
+        cliente_telefono: telLimpio,
+        servicio_id: item.servicio.id,
+        fecha: new Date(fecha),
+        hora_inicio: inicio,
+        hora_fin: fin,
+        grupo_reserva: grupoReserva,
+        orden_en_grupo: ordenGrupo,
+        estado: 'confirmado',
+        token_acceso: uuidv4(),
+        token_expires_at: tokenExpires,
+        origen: 'manual'
+      });
+    });
+
+    const rangoInicio = hora_inicio;
+    const rangoFin = cursor;
+
+    const turnosCreados = await verificarYReservarBloque(turnosData, rangoInicio, rangoFin);
+
+    // Ordenar cronológicamente para el mensaje de WhatsApp y la respuesta
+    turnosCreados.sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio));
+    turnosCreados.forEach(t => { t.extras = []; });
+
+    const debeNotificar = notificar !== false;
+    if (debeNotificar) {
+      enviarConfirmacionGrupo(turnosCreados).catch(err =>
+        console.error('Error enviando WA de grupo (admin):', err.message)
+      );
+    }
+
+    res.status(201).json({
+      success: true,
+      grupo_reserva: grupoReserva,
+      hora_inicio: rangoInicio,
+      hora_fin: rangoFin,
+      turnos: turnosCreados,
+      notificado: debeNotificar
+    });
+  } catch (err) {
+    if (err.message === 'HORARIO_NO_DISPONIBLE') {
+      return res.status(409).json({ error: 'Ese horario ya no está disponible para todos los servicios.' });
     }
     next(err);
   }
