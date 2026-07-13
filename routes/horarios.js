@@ -61,20 +61,37 @@ router.delete('/:id', authAdmin, async (req, res, next) => {
 router.get('/bloques-cerrados', async (req, res, next) => {
   try {
     const bloques = await prisma.bloqueCerrado.findMany({
-      orderBy: { fecha: 'asc' }
+      orderBy: [{ fecha: 'asc' }, { hora_inicio: 'asc' }]
     });
     res.json(bloques);
   } catch (err) { next(err); }
 });
 
 // ── Admin: crear bloque cerrado ────────────────
+// Si se envían hora_inicio Y hora_fin, bloquea solo ese rango horario del día.
+// Si se dejan vacíos, bloquea el día completo (comportamiento original).
 router.post('/bloques-cerrados', authAdmin, async (req, res, next) => {
   try {
-    const { fecha, motivo } = req.body;
+    const { fecha, motivo, hora_inicio, hora_fin } = req.body;
     if (!fecha) return res.status(400).json({ error: 'Falta campo: fecha' });
 
+    // O se mandan las dos horas, o ninguna (día completo)
+    const tieneInicio = !!hora_inicio;
+    const tieneFin = !!hora_fin;
+    if (tieneInicio !== tieneFin) {
+      return res.status(400).json({ error: 'Para bloquear un rango horario específico, completá tanto la hora de inicio como la de fin' });
+    }
+    if (tieneInicio && tieneFin && hora_fin <= hora_inicio) {
+      return res.status(400).json({ error: 'La hora de fin debe ser posterior a la hora de inicio' });
+    }
+
     const bloque = await prisma.bloqueCerrado.create({
-      data: { fecha: new Date(fecha), motivo }
+      data: {
+        fecha: new Date(fecha),
+        motivo,
+        hora_inicio: tieneInicio ? hora_inicio : null,
+        hora_fin: tieneFin ? hora_fin : null
+      }
     });
     res.status(201).json(bloque);
   } catch (err) { next(err); }
