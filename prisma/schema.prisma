@@ -45,11 +45,16 @@ model HorarioConfig {
   @@map("horarios_config")
 }
 
+// Bloqueo de agenda. Si hora_inicio/hora_fin son null, bloquea el DÍA COMPLETO
+// (comportamiento original). Si tienen valor, bloquea solo ese rango horario
+// dentro del día indicado.
 model BloqueCerrado {
-  id         Int      @id @default(autoincrement())
-  fecha      DateTime @db.Date
-  motivo     String?
-  created_at DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  fecha       DateTime @db.Date
+  hora_inicio String?  // null = bloquea el día completo
+  hora_fin    String?  // null = bloquea el día completo
+  motivo      String?
+  created_at  DateTime @default(now())
 
   @@map("bloques_cerrados")
 }
