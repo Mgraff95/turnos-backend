@@ -23,6 +23,8 @@ model Servicio {
   intercalar_desde_min   Int?
   servicios_compatibles  Int[]   @default([])
   max_simultaneos        Int     @default(2)
+  incluye_nota     Boolean  @default(false)
+  nota             String?
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 

@@ -74,6 +74,10 @@ async function enviarConfirmacion(turno) {
     }
   }
 
+  if (turno.servicio.incluye_nota && turno.servicio.nota) {
+    mensaje += `\n📝 ${turno.servicio.nota}\n`;
+  }
+
   mensaje +=
     `\nPodés ver o modificar tu turno en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
@@ -108,6 +112,13 @@ async function enviarConfirmacionGrupo(turnos) {
     }
   }
 
+  let notas = '';
+  for (const t of turnos) {
+    if (t.servicio.incluye_nota && t.servicio.nota) {
+      notas += `\n📝 ${t.servicio.nombre}: ${t.servicio.nota}`;
+    }
+  }
+
   const mensaje =
     `¡Hola ${primero.cliente_nombre}! 🎉\n\n` +
     `Tus turnos están confirmados:\n` +
@@ -115,6 +126,7 @@ async function enviarConfirmacionGrupo(turnos) {
     `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
     cuerpo + `\n\n` +
     (hayVariable ? `💰 Total (desde): $${total}\n💡 Los precios "desde" son de referencia y pueden variar según la complejidad del diseño.\n\n` : `💰 Total: $${total}\n\n`) +
+    (notas ? `${notas}\n\n` : '') +
     `Podés ver o cancelar tus turnos en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
 

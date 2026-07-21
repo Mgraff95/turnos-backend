@@ -17,7 +17,7 @@ router.get('/', async (req, res, next) => {
 // ── Admin: crear servicio ──────────────────────
 router.post('/', authAdmin, async (req, res, next) => {
   try {
-    const { nombre, duracion_minutos, precio_pesos } = req.body;
+    const { nombre, duracion_minutos, precio_pesos, incluye_nota, nota } = req.body;
 
     if (!nombre || !duracion_minutos || !precio_pesos) {
       return res.status(400).json({ error: 'Faltan campos: nombre, duracion_minutos, precio_pesos' });
@@ -27,7 +27,9 @@ router.post('/', authAdmin, async (req, res, next) => {
       data: {
         nombre,
         duracion_minutos: parseInt(duracion_minutos),
-        precio_pesos: parseFloat(precio_pesos)
+        precio_pesos: parseFloat(precio_pesos),
+        incluye_nota: !!incluye_nota,
+        nota: nota || null
       }
     });
     res.status(201).json(servicio);
