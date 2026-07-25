@@ -1,22 +1,26 @@
+
 const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const {
   enviarAsistenciaConfirmada,
+  enviarAsistenciaConfirmadaGrupo,
   notificarCancelacionADaniela,
-  notificarWaitlist
+  notificarCancelacionGrupoADaniela,
+  notificarWaitlist,
+  enviarMensaje
 } = require('../services/whatsapp');
-
+ 
 // ── Determinar franja horaria ──────────────────
 function determinarFranja(horaInicio) {
   const hora = parseInt(horaInicio.split(':')[0]);
   return hora < 14 ? 'manana' : 'tarde';
 }
-
+ 
 // ── Notificar waitlist cuando se libera un turno ──
 async function procesarWaitlist(turno) {
   const franja = determinarFranja(turno.hora_inicio);
-
+ 
   const esperando = await prisma.waitlist.findMany({
     where: {
       fecha: turno.fecha,
@@ -26,14 +30,14 @@ async function procesarWaitlist(turno) {
     },
     include: { servicio: true }
   });
-
+ 
   if (esperando.length === 0) {
     console.log('   No hay nadie en waitlist para este horario');
     return;
   }
-
+ 
   console.log(`   Notificando a ${esperando.length} persona(s) en waitlist...`);
-
+ 
   for (const entrada of esperando) {
     const enviado = await notificarWaitlist(entrada, turno.hora_inicio);
     if (enviado) {
@@ -45,35 +49,35 @@ async function procesarWaitlist(turno) {
     }
   }
 }
-
+ 
 // ── POST /api/whatsapp/webhook (Wassenger) ─────
 router.post('/', express.json(), async (req, res) => {
   try {
     // Wassenger envía el payload en formato JSON
     const payload = req.body;
-
+ 
     // Solo procesar mensajes entrantes (no los que envía el sistema)
     if (!payload || payload.event !== 'message:in:new') {
       return res.sendStatus(200);
     }
-
+ 
     const data = payload.data;
     if (!data) return res.sendStatus(200);
-
+ 
     const fromPhone = data.fromNumber || data.from || '';
     const bodyText = data.body || data.text || '';
-
+ 
     console.log(`📩 Mensaje recibido de ${fromPhone}: "${bodyText}"`);
-
+ 
     // Limpiar teléfono — quedarnos solo con los 10 dígitos locales
     const telefono = fromPhone
       .replace(/\D/g, '')
       .replace(/^549/, '')
       .replace(/^54/, '')
       .slice(-10);
-
+ 
     const respuesta = bodyText.trim();
-
+ 
     const hoy = new Date();
     const turno = await prisma.turno.findFirst({
       where: {
@@ -84,27 +88,54 @@ router.post('/', express.json(), async (req, res) => {
       include: { servicio: true },
       orderBy: [{ fecha: 'asc' }, { hora_inicio: 'asc' }]
     });
-
+ 
     if (!turno) {
       console.log(`   No se encontró turno pendiente para ${telefono}`);
       return res.sendStatus(200);
     }
-
-   if (respuesta === '1') {
-      console.log(`   ✅ ${turno.cliente_nombre} confirmó asistencia (turno #${turno.id})`);
-      await enviarAsistenciaConfirmada(turno);
+ 
+    // Si el turno forma parte de una reserva múltiple, traemos TODO el bloque
+    // (mismo grupo_reserva) para confirmar/cancelar los servicios juntos, en vez
+    // de actuar solo sobre el primero que encontramos.
+    const grupo = turno.grupo_reserva
+      ? await prisma.turno.findMany({
+          where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
+          include: { servicio: true },
+          orderBy: { orden_en_grupo: 'asc' }
+        })
+      : null;
+ 
+    if (respuesta === '1') {
+      if (grupo) {
+        console.log(`   ✅ ${turno.cliente_nombre} confirmó asistencia (grupo, ${grupo.length} servicios)`);
+        await enviarAsistenciaConfirmadaGrupo(grupo);
+      } else {
+        console.log(`   ✅ ${turno.cliente_nombre} confirmó asistencia (turno #${turno.id})`);
+        await enviarAsistenciaConfirmada(turno);
+      }
     } else if (respuesta === '2') {
-      console.log(`   ❌ ${turno.cliente_nombre} canceló (turno #${turno.id})`);
-      await prisma.turno.update({
-        where: { id: turno.id },
-        data: { estado: 'cancelado' }
-      });
-      await notificarCancelacionADaniela(turno);
-      await procesarWaitlist(turno);
-      // Mensaje de cancelación con invitación a reagendar
-      const { enviarMensaje } = require('../services/whatsapp');
+      if (grupo) {
+        console.log(`   ❌ ${turno.cliente_nombre} canceló (grupo, ${grupo.length} servicios)`);
+        await prisma.turno.updateMany({
+          where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
+          data: { estado: 'cancelado' }
+        });
+        await notificarCancelacionGrupoADaniela(grupo);
+        for (const t of grupo) {
+          await procesarWaitlist(t);
+        }
+      } else {
+        console.log(`   ❌ ${turno.cliente_nombre} canceló (turno #${turno.id})`);
+        await prisma.turno.update({
+          where: { id: turno.id },
+          data: { estado: 'cancelado' }
+        });
+        await notificarCancelacionADaniela(turno);
+        await procesarWaitlist(turno);
+      }
+      // Mensaje de cancelación con invitación a reagendar (mismo texto para turno simple o grupo)
       await enviarMensaje(turno.cliente_telefono,
-        `Entendemos ${turno.cliente_nombre}, cancelamos tu turno sin problema. 😊\n\n` +
+        `Entendemos ${turno.cliente_nombre}, cancelamos tu${grupo ? 's turnos' : ' turno'} sin problema. 😊\n\n` +
         `Cuando quieras volver a reservar, podés hacerlo desde acá:\n` +
         `${process.env.FRONTEND_URL}\n\n` +
         `¡Te esperamos pronto! 💅`
@@ -113,11 +144,12 @@ router.post('/', express.json(), async (req, res) => {
       console.log(`   ⚠️ Respuesta no reconocida: "${respuesta}"`);
     }
     res.sendStatus(200);
-
+ 
   } catch (error) {
     console.error('❌ Error en webhook Wassenger:', error.message);
     res.sendStatus(200);
   }
 });
-
+ 
 module.exports = router;
+ 
