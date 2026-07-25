@@ -1,8 +1,9 @@
+
 const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { authAdmin } = require('../middleware/auth');
-
+ 
 // ── Público: listar configuración de horarios ──
 router.get('/', async (req, res, next) => {
   try {
@@ -12,16 +13,16 @@ router.get('/', async (req, res, next) => {
     res.json(horarios);
   } catch (err) { next(err); }
 });
-
+ 
 // ── Admin: agregar rango horario a un día ──────
 router.post('/', authAdmin, async (req, res, next) => {
   try {
     const { dia_semana, hora_inicio, hora_fin, espacio_entre_turnos_min } = req.body;
-
+ 
     if (dia_semana === undefined || !hora_inicio || !hora_fin) {
       return res.status(400).json({ error: 'Faltan campos: dia_semana, hora_inicio, hora_fin' });
     }
-
+ 
     const horario = await prisma.horarioConfig.create({
       data: {
         dia_semana: parseInt(dia_semana),
@@ -34,7 +35,7 @@ router.post('/', authAdmin, async (req, res, next) => {
     res.status(201).json(horario);
   } catch (err) { next(err); }
 });
-
+ 
 // ── Admin: actualizar un rango específico ──────
 router.patch('/:id', authAdmin, async (req, res, next) => {
   try {
@@ -46,7 +47,7 @@ router.patch('/:id', authAdmin, async (req, res, next) => {
     res.json(horario);
   } catch (err) { next(err); }
 });
-
+ 
 // ── Admin: eliminar un rango horario ───────────
 router.delete('/:id', authAdmin, async (req, res, next) => {
   try {
@@ -56,7 +57,7 @@ router.delete('/:id', authAdmin, async (req, res, next) => {
     res.json({ success: true });
   } catch (err) { next(err); }
 });
-
+ 
 // ── Público: listar bloques cerrados ───────────
 router.get('/bloques-cerrados', async (req, res, next) => {
   try {
@@ -66,7 +67,7 @@ router.get('/bloques-cerrados', async (req, res, next) => {
     res.json(bloques);
   } catch (err) { next(err); }
 });
-
+ 
 // ── Admin: crear bloque cerrado ────────────────
 // Si se envían hora_inicio Y hora_fin, bloquea solo ese rango horario del día.
 // Si se dejan vacíos, bloquea el día completo (comportamiento original).
@@ -74,7 +75,7 @@ router.post('/bloques-cerrados', authAdmin, async (req, res, next) => {
   try {
     const { fecha, motivo, hora_inicio, hora_fin } = req.body;
     if (!fecha) return res.status(400).json({ error: 'Falta campo: fecha' });
-
+ 
     // O se mandan las dos horas, o ninguna (día completo)
     const tieneInicio = !!hora_inicio;
     const tieneFin = !!hora_fin;
@@ -84,7 +85,7 @@ router.post('/bloques-cerrados', authAdmin, async (req, res, next) => {
     if (tieneInicio && tieneFin && hora_fin <= hora_inicio) {
       return res.status(400).json({ error: 'La hora de fin debe ser posterior a la hora de inicio' });
     }
-
+ 
     const bloque = await prisma.bloqueCerrado.create({
       data: {
         fecha: new Date(fecha),
@@ -96,7 +97,38 @@ router.post('/bloques-cerrados', authAdmin, async (req, res, next) => {
     res.status(201).json(bloque);
   } catch (err) { next(err); }
 });
-
+ 
+// ── Admin: actualizar bloque cerrado ───────────
+// Misma validación que la creación: o se mandan las dos horas (bloquea ese rango),
+// o ninguna (bloquea el día completo).
+router.patch('/bloques-cerrados/:id', authAdmin, async (req, res, next) => {
+  try {
+    const { fecha, motivo, hora_inicio, hora_fin } = req.body;
+ 
+    const tieneInicio = !!hora_inicio;
+    const tieneFin = !!hora_fin;
+    if (tieneInicio !== tieneFin) {
+      return res.status(400).json({ error: 'Para bloquear un rango horario específico, completá tanto la hora de inicio como la de fin' });
+    }
+    if (tieneInicio && tieneFin && hora_fin <= hora_inicio) {
+      return res.status(400).json({ error: 'La hora de fin debe ser posterior a la hora de inicio' });
+    }
+ 
+    const data = {
+      motivo,
+      hora_inicio: tieneInicio ? hora_inicio : null,
+      hora_fin: tieneFin ? hora_fin : null
+    };
+    if (fecha) data.fecha = new Date(fecha);
+ 
+    const bloque = await prisma.bloqueCerrado.update({
+      where: { id: parseInt(req.params.id) },
+      data
+    });
+    res.json(bloque);
+  } catch (err) { next(err); }
+});
+ 
 // ── Admin: eliminar bloque cerrado ─────────────
 router.delete('/bloques-cerrados/:id', authAdmin, async (req, res, next) => {
   try {
@@ -106,5 +138,6 @@ router.delete('/bloques-cerrados/:id', authAdmin, async (req, res, next) => {
     res.json({ success: true });
   } catch (err) { next(err); }
 });
-
+ 
 module.exports = router;
+ 
