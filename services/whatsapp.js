@@ -1,9 +1,10 @@
-const axios = require('axios');
 
+const axios = require('axios');
+ 
 const WASSENGER_API = 'https://api.wassenger.com/v1';
 const WASSENGER_TOKEN = process.env.WASSENGER_TOKEN;
 const WASSENGER_DEVICE = process.env.WASSENGER_DEVICE; // ID del número: 6a0e57773741732d95dbd1a3
-
+ 
 // ── Formatear fecha legible ────────────────────────────
 function formatearFecha(fecha) {
   const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -13,7 +14,7 @@ function formatearFecha(fecha) {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `${dia} ${dd}/${mm}`;
 }
-
+ 
 // ── Enviar mensaje genérico via Wassenger ──────────────
 async function enviarWhatsApp(telefono, mensaje) {
   if (!WASSENGER_TOKEN) {
@@ -43,7 +44,7 @@ async function enviarWhatsApp(telefono, mensaje) {
     return false;
   }
 }
-
+ 
 // ── Confirmación de turno ──────────────────────────────
 async function enviarConfirmacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
@@ -53,7 +54,7 @@ async function enviarConfirmacion(turno) {
     `📅 ${fechaStr}\n` +
     `⏰ ${turno.hora_inicio} hs\n` +
     `💅 ${turno.servicio.nombre}\n`;
-
+ 
   // Si el turno tiene extras, los listamos y mostramos el total
   if (turno.extras && turno.extras.length > 0) {
     mensaje += `\n✨ Extras:\n`;
@@ -73,17 +74,17 @@ async function enviarConfirmacion(turno) {
       mensaje += `💡 Los precios "desde" son de referencia y pueden variar según la complejidad del diseño.\n`;
     }
   }
-
+ 
   if (turno.servicio.incluye_nota && turno.servicio.nota) {
     mensaje += `\n📝 ${turno.servicio.nota}\n`;
   }
-
+ 
   mensaje +=
     `\nPodés ver o modificar tu turno en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
-
+ 
 // ── Confirmación de RESERVA MÚLTIPLE (bloque de varios servicios) ──
 // `turnos`: array de turnos del grupo, ordenados por orden_en_grupo.
 // Cada turno trae .servicio y opcionalmente .extras (array de extras elegidos).
@@ -92,7 +93,7 @@ async function enviarConfirmacionGrupo(turnos) {
   const primero = turnos[0];
   const ultimo = turnos[turnos.length - 1];
   const fechaStr = formatearFecha(primero.fecha);
-
+ 
   let total = 0;
   let hayVariable = false;
   let cuerpo = '';
@@ -111,14 +112,14 @@ async function enviarConfirmacionGrupo(turnos) {
       }
     }
   }
-
+ 
   let notas = '';
   for (const t of turnos) {
     if (t.servicio.incluye_nota && t.servicio.nota) {
       notas += `\n📝 ${t.servicio.nombre}: ${t.servicio.nota}`;
     }
   }
-
+ 
   const mensaje =
     `¡Hola ${primero.cliente_nombre}! 🎉\n\n` +
     `Tus turnos están confirmados:\n` +
@@ -129,10 +130,10 @@ async function enviarConfirmacionGrupo(turnos) {
     (notas ? `${notas}\n\n` : '') +
     `Podés ver o cancelar tus turnos en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
-
+ 
   return enviarWhatsApp(primero.cliente_telefono, mensaje);
 }
-
+ 
 // ── Recordatorio con opciones (24h antes) ─────────────
 async function enviarRecordatorio(turno) {
   const mensaje =
@@ -145,7 +146,27 @@ async function enviarRecordatorio(turno) {
     `¡Gracias! 💅`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
-
+ 
+// ── Recordatorio de RESERVA MÚLTIPLE (un solo mensaje para todo el bloque) ──
+// `turnos`: array de turnos del mismo grupo_reserva, ordenados por hora_inicio.
+async function enviarRecordatorioGrupo(turnos) {
+  if (!turnos || turnos.length === 0) return false;
+  const primero = turnos[0];
+  const ultimo = turnos[turnos.length - 1];
+  const cuerpo = turnos.map(t => `⏰ ${t.hora_inicio} hs · 💅 ${t.servicio.nombre}`).join('\n');
+ 
+  const mensaje =
+    `⏰ ¡Recordatorio!\n\n` +
+    `Tenés turno mañana:\n` +
+    `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
+    cuerpo + `\n\n` +
+    `Respondé con:\n` +
+    `*1* ✅ Confirmo asistencia\n` +
+    `*2* ❌ No puedo ir\n\n` +
+    `¡Gracias! 💅`;
+  return enviarWhatsApp(primero.cliente_telefono, mensaje);
+}
+ 
 // ── Confirmación de asistencia ─────────────────────────
 async function enviarAsistenciaConfirmada(turno) {
   const mensaje =
@@ -155,7 +176,20 @@ async function enviarAsistenciaConfirmada(turno) {
     `📍 https://maps.app.goo.gl/j6pj7FT76p2fyp6o8`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
-
+ 
+// ── Confirmación de asistencia (RESERVA MÚLTIPLE) ──────
+async function enviarAsistenciaConfirmadaGrupo(turnos) {
+  if (!turnos || turnos.length === 0) return false;
+  const primero = turnos[0];
+  const ultimo = turnos[turnos.length - 1];
+  const mensaje =
+    `¡Perfecto ${primero.cliente_nombre}! ✅\n\n` +
+    `Tu asistencia está confirmada para mañana de ${primero.hora_inicio} a ${ultimo.hora_fin} hs.\n\n` +
+    `¡Te esperamos en Patricios 1579, Ingeniero Maschwitz! 💅\n` +
+    `📍 https://maps.app.goo.gl/j6pj7FT76p2fyp6o8`;
+  return enviarWhatsApp(primero.cliente_telefono, mensaje);
+}
+ 
 // ── Cancelación por cliente ────────────────────────────
 async function enviarCancelacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
@@ -168,7 +202,7 @@ async function enviarCancelacion(turno) {
     `¡Te esperamos pronto! 💅`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
-
+ 
 // ── Cancelación de RESERVA MÚLTIPLE (bloque completo) ──
 async function enviarCancelacionGrupo(turnos) {
   if (!turnos || turnos.length === 0) return false;
@@ -184,7 +218,7 @@ async function enviarCancelacionGrupo(turnos) {
     `¡Te esperamos pronto! 💅`;
   return enviarWhatsApp(primero.cliente_telefono, mensaje);
 }
-
+ 
 // ── Notificación a Daniela de cancelación ─────────────
 async function notificarCancelacionADaniela(turno) {
   const fechaStr = formatearFecha(turno.fecha);
@@ -203,7 +237,7 @@ async function notificarCancelacionADaniela(turno) {
     `El horario quedó libre.`;
   return enviarWhatsApp(telefonoDaniela, mensaje);
 }
-
+ 
 // ── Notificación a Daniela de cancelación de bloque ────
 async function notificarCancelacionGrupoADaniela(turnos) {
   if (!turnos || turnos.length === 0) return false;
@@ -226,7 +260,7 @@ async function notificarCancelacionGrupoADaniela(turnos) {
     `El bloque quedó libre.`;
   return enviarWhatsApp(telefonoDaniela, mensaje);
 }
-
+ 
 // ── Modificación ───────────────────────────────────────
 async function enviarModificacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
@@ -239,7 +273,7 @@ async function enviarModificacion(turno) {
     `¡Te esperamos! 💅`;
   return enviarWhatsApp(turno.cliente_telefono, mensaje);
 }
-
+ 
 // ── Notificación waitlist: se liberó un turno ─────────
 async function notificarWaitlist(entrada, horaLiberada) {
   const fechaStr = formatearFecha(entrada.fecha);
@@ -253,7 +287,7 @@ async function notificarWaitlist(entrada, horaLiberada) {
     `${process.env.FRONTEND_URL}`;
   return enviarWhatsApp(entrada.cliente_telefono, mensaje);
 }
-
+ 
 // ── Notificación a Daniela: turno tomado por waitlist ──
 async function notificarTurnoTomadoWaitlist(turno) {
   const fechaStr = formatearFecha(turno.fecha);
@@ -270,17 +304,19 @@ async function notificarTurnoTomadoWaitlist(turno) {
     `⚠️ No te vayas del local.`;
   return enviarWhatsApp(telefonoDaniela, mensaje);
 }
-
+ 
 // ── Mensaje genérico (para respuestas del webhook) ─────
 async function enviarMensaje(telefono, texto) {
   return enviarWhatsApp(telefono, texto);
 }
-
+ 
 module.exports = {
   enviarConfirmacion,
   enviarConfirmacionGrupo,
   enviarRecordatorio,
+  enviarRecordatorioGrupo,
   enviarAsistenciaConfirmada,
+  enviarAsistenciaConfirmadaGrupo,
   enviarCancelacion,
   enviarCancelacionGrupo,
   notificarCancelacionADaniela,
@@ -290,3 +326,4 @@ module.exports = {
   notificarTurnoTomadoWaitlist,
   enviarMensaje
 };
+ 
