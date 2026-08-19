@@ -22,6 +22,7 @@ app.use('/api/servicios', require('./routes/servicios'));
 app.use('/api/extras', require('./routes/extras'));
 app.use('/api/horarios', require('./routes/horarios'));
 app.use('/api/turnos', require('./routes/turnos'));
+app.use('/api/pagos', require('./routes/pagos'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin', require('./routes/pagos-admin'));
 app.use('/api/whatsapp/webhook', require('./routes/webhook'));

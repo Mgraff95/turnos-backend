@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
+const { validarTelefono, resolverExtras } = require('../lib/reservas');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -29,34 +30,10 @@ const {
   notificarTurnoTomadoWaitlist
 } = require('../services/whatsapp');
  
-// ── Validar teléfono argentino (10 dígitos) ────
-function validarTelefono(tel) {
-  const limpio = tel.replace(/\D/g, '');
-  return /^\d{10}$/.test(limpio) ? limpio : null;
-}
- 
 // ── Determinar franja horaria ──────────────────
 function determinarFranja(horaInicio) {
   const hora = parseInt(horaInicio.split(':')[0]);
   return hora < 14 ? 'manana' : 'tarde';
-}
- 
-// ── Resolver extras válidos para un servicio ───
-// Devuelve solo los extras activos que efectivamente se ofrecen para ese servicio.
-async function resolverExtras(extrasInput, servicioId) {
-  if (!extrasInput) return [];
-  const arr = Array.isArray(extrasInput)
-    ? extrasInput
-    : String(extrasInput).split(',');
-  const ids = arr.map(n => parseInt(n)).filter(n => !isNaN(n));
-  if (ids.length === 0) return [];
-  return prisma.extra.findMany({
-    where: {
-      id: { in: ids },
-      activo: true,
-      servicios_ids: { has: servicioId }
-    }
-  });
 }
  
 // ── Notificar/desactivar waitlist para las franjas de un turno tomado ──

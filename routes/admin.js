@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
+const { resolverExtras } = require('../lib/reservas');
 const { authAdmin } = require('../middleware/auth');
 const {
   calcularHoraFin,
@@ -32,24 +33,6 @@ async function adjuntarExtras(turnos) {
     t.extras = (t.extras_ids || []).map(id => mapa.get(id)).filter(Boolean);
   });
   return turnos;
-}
- 
-// Resolver extras válidos para un servicio (mismo criterio que en turnos.js:
-// solo extras activos que efectivamente se ofrecen para ese servicio).
-async function resolverExtras(extrasInput, servicioId) {
-  if (!extrasInput) return [];
-  const arr = Array.isArray(extrasInput)
-    ? extrasInput
-    : String(extrasInput).split(',');
-  const ids = arr.map(n => parseInt(n)).filter(n => !isNaN(n));
-  if (ids.length === 0) return [];
-  return prisma.extra.findMany({
-    where: {
-      id: { in: ids },
-      activo: true,
-      servicios_ids: { has: servicioId }
-    }
-  });
 }
  
 // ── Login admin ────────────────────────────────

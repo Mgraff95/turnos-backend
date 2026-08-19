@@ -2,21 +2,13 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const { authAdmin } = require('../middleware/auth');
+const { validarTelefono } = require('../lib/reservas');
 
 // Límites de seguridad para la configuración de cobro (spec §6.8)
 const SENA_MIN = 1;
 const SENA_MAX = 200000;
 const HOLD_MIN = 5;
 const HOLD_MAX = 60;
-
-// ── Validar teléfono argentino (10 dígitos) ────
-// Mismo criterio que routes/turnos.js: los teléfonos se guardan siempre
-// normalizados a 10 dígitos, así que la restricción tiene que matchear igual.
-function validarTelefono(tel) {
-  if (!tel) return null;
-  const limpio = String(tel).replace(/\D/g, '');
-  return /^\d{10}$/.test(limpio) ? limpio : null;
-}
 
 // La config es una fila única (id = 1). Si todavía no existe (por ejemplo
 // porque no se corrió el seed), la creamos con los defaults del schema en vez
