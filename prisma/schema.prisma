@@ -91,6 +91,8 @@ model Turno {
   estado            String   @default("confirmado")
   pago_realizado    Boolean  @default(false)
   pago_monto        Decimal? @db.Decimal(10, 2)
+  pago_tipo         String?  // sena | total
+  mp_payment_id     String?  // id del pago en Mercado Pago (traza)
   extras_ids        Int[]    @default([]) // IDs de extras elegidos para este turno
   grupo_reserva     String?  // UUID compartido entre turnos de una misma reserva múltiple (null = turno simple)
   orden_en_grupo    Int?     // posición del servicio dentro del bloque (1, 2, 3...)
@@ -147,4 +149,87 @@ model Waitlist {
   @@index([fecha, franja, activo])
   @@index([cliente_telefono])
   @@map("waitlist")
+}
+
+// ============================================
+// COBROS / MERCADO PAGO
+// ============================================
+
+// Configuracion global de cobros. Fila unica (id = 1).
+// cobro_activo = false -> la web reserva sin pedir pago (comportamiento previo a MP).
+model ConfigPago {
+  id             Int      @id @default(1)
+  cobro_activo   Boolean  @default(false)
+  sena_monto     Decimal  @default(5000) @db.Decimal(10, 2)
+  hold_minutos   Int      @default(12)
+  texto_checkout String?
+  updated_at     DateTime @updatedAt
+
+  @@map("config_pago")
+}
+
+// Clientas que deben abonar el 100% del servicio por adelantado.
+// Se gestiona desde el panel admin (ficha de clienta).
+model ClienteRestriccion {
+  id                  Int      @id @default(autoincrement())
+  cliente_telefono    String   @unique
+  cliente_nombre      String?
+  cliente_apellido    String?
+  requiere_pago_total Boolean  @default(true)
+  motivo              String?
+  activo              Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@index([cliente_telefono])
+  @@map("cliente_restricciones")
+}
+
+// Hold temporal del slot mientras la clienta paga. NO es un turno:
+// la tabla turnos queda intacta hasta que el pago esta aprobado.
+model ReservaPendiente {
+  id               Int      @id @default(autoincrement())
+  external_ref     String   @unique
+  cliente_nombre   String
+  cliente_apellido String
+  cliente_telefono String
+  fecha            DateTime @db.Date
+  hora_inicio      String
+  hora_fin         String
+  payload          Json
+  es_multi         Boolean  @default(false)
+  monto            Decimal  @db.Decimal(10, 2)
+  tipo_pago        String
+  estado           String   @default("activa")
+  mp_preference_id String?
+  expira_at        DateTime
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@index([fecha, estado, expira_at])
+  @@index([estado])
+  @@map("reservas_pendientes")
+}
+
+// Registro de todo pago recibido. Auditoria + reembolsos.
+model Pago {
+  id               Int      @id @default(autoincrement())
+  mp_payment_id    String   @unique
+  mp_preference_id String?
+  external_ref     String?
+  cliente_telefono String
+  monto            Decimal  @db.Decimal(10, 2)
+  tipo             String
+  estado           String
+  metodo           String?
+  grupo_reserva    String?
+  turno_ids        Int[]    @default([])
+  raw              Json?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@index([cliente_telefono])
+  @@index([external_ref])
+  @@index([created_at])
+  @@map("pagos")
 }

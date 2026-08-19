@@ -3,6 +3,40 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const { authAdmin } = require('../middleware/auth');
 
+// Calcula las métricas de una clienta a partir de sus turnos.
+// Mismo criterio que el listado: solo los confirmados suman gasto.
+function calcularStats(turnos) {
+  const stats = {
+    totalConfirmados: 0,
+    totalCancelados: 0,
+    gastoTotal: 0,
+    primeraVisita: null,
+    ultimaVisita: null
+  };
+  const servicios = {};
+
+  turnos.forEach(t => {
+    if (t.estado === 'confirmado') {
+      stats.totalConfirmados++;
+      stats.gastoTotal += t.servicio ? parseFloat(t.servicio.precio_pesos) : 0;
+      const sNombre = t.servicio?.nombre || 'Otro';
+      servicios[sNombre] = (servicios[sNombre] || 0) + 1;
+    } else if (t.estado === 'cancelado') {
+      stats.totalCancelados++;
+    }
+
+    if (!stats.primeraVisita || new Date(t.fecha) < new Date(stats.primeraVisita)) stats.primeraVisita = t.fecha;
+    if (!stats.ultimaVisita || new Date(t.fecha) > new Date(stats.ultimaVisita)) stats.ultimaVisita = t.fecha;
+  });
+
+  const total = stats.totalConfirmados + stats.totalCancelados;
+  stats.totalTurnos = total;
+  stats.tasaCancelacion = total > 0 ? ((stats.totalCancelados / total) * 100).toFixed(1) : 0;
+  stats.servicioFavorito = Object.entries(servicios).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
+
+  return stats;
+}
+
 // ── GET /api/admin/clientes → Lista de clientes ──
 router.get('/', authAdmin, async (req, res, next) => {
   try {
@@ -61,6 +95,9 @@ router.get('/', authAdmin, async (req, res, next) => {
 });
 
 // ── GET /api/admin/clientes/:telefono → Ficha completa ──
+// Devuelve { cliente, stats, notas, historial, restriccion }, que es la forma
+// que el panel viene consumiendo. `restriccion` es la marca de pago total
+// anticipado (null si la clienta no está en la lista).
 router.get('/:telefono', authAdmin, async (req, res, next) => {
   try {
     const { telefono } = req.params;
@@ -80,7 +117,34 @@ router.get('/:telefono', authAdmin, async (req, res, next) => {
       orderBy: { created_at: 'desc' }
     });
 
-    res.json({ turnos, notas });
+    // Tolerante a que la tabla todavía no exista: entre el deploy del código y
+    // el `prisma db push` en Railway hay una ventana en la que esta consulta
+    // falla, y la ficha de clienta no tiene por qué caerse por eso.
+    let restriccion = null;
+    try {
+      restriccion = await prisma.clienteRestriccion.findUnique({
+        where: { cliente_telefono: telefono }
+      });
+    } catch (e) {
+      console.error("No se pudo leer cliente_restricciones:", e.message);
+    }
+
+    // El turno más reciente tiene el nombre más actualizado de la clienta.
+    const masReciente = turnos[0];
+
+    res.json({
+      cliente: {
+        telefono,
+        nombre: masReciente.cliente_nombre,
+        apellido: masReciente.cliente_apellido
+      },
+      stats: calcularStats(turnos),
+      notas,
+      historial: turnos,
+      restriccion: restriccion && restriccion.activo ? restriccion : null,
+      // Se mantiene por compatibilidad con cualquier consumidor viejo del endpoint.
+      turnos
+    });
   } catch (err) { next(err); }
 });
 
