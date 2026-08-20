@@ -192,4 +192,135 @@ router.delete('/restricciones/:telefono', authAdmin, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /api/admin/pagos → listado de pagos recibidos ──
+// Filtros: ?desde=YYYY-MM-DD &hasta=YYYY-MM-DD &estado= &telefono= &pagina=1
+router.get('/pagos', authAdmin, async (req, res, next) => {
+  try {
+    const { desde, hasta, estado, telefono } = req.query;
+    const pagina = Math.max(1, parseInt(req.query.pagina) || 1);
+    const porPagina = 30;
+
+    const where = {};
+    if (estado) where.estado = estado;
+    if (telefono) {
+      const tel = validarTelefono(telefono);
+      where.cliente_telefono = tel || telefono;
+    }
+    if (desde || hasta) {
+      where.created_at = {};
+      if (desde) where.created_at.gte = new Date(`${desde}T00:00:00-03:00`);
+      // El "hasta" es inclusivo: se toma hasta el final de ese día en hora argentina.
+      if (hasta) where.created_at.lte = new Date(`${hasta}T23:59:59-03:00`);
+    }
+
+    const [total, pagos] = await Promise.all([
+      prisma.pago.count({ where }),
+      prisma.pago.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip: (pagina - 1) * porPagina,
+        take: porPagina
+      })
+    ]);
+
+    // Adjuntar los turnos de cada pago en una sola consulta.
+    const todosIds = [...new Set(pagos.flatMap(p => p.turno_ids || []))];
+    const turnos = todosIds.length > 0
+      ? await prisma.turno.findMany({
+          where: { id: { in: todosIds } },
+          include: { servicio: { select: { nombre: true } } }
+        })
+      : [];
+    const mapaTurnos = new Map(turnos.map(t => [t.id, t]));
+
+    res.json({
+      total,
+      pagina,
+      paginas: Math.max(1, Math.ceil(total / porPagina)),
+      pagos: pagos.map(p => ({
+        id: p.id,
+        mp_payment_id: p.mp_payment_id,
+        cliente_telefono: p.cliente_telefono,
+        monto: Number(p.monto),
+        tipo: p.tipo,
+        estado: p.estado,
+        metodo: p.metodo,
+        created_at: p.created_at,
+        // El raw de MP no se expone: puede traer datos del pagador que el panel no necesita.
+        turnos: (p.turno_ids || []).map(id => {
+          const t = mapaTurnos.get(id);
+          return t ? {
+            id: t.id,
+            servicio: t.servicio?.nombre,
+            fecha: t.fecha,
+            hora_inicio: t.hora_inicio,
+            estado: t.estado,
+            cliente: `${t.cliente_nombre} ${t.cliente_apellido}`
+          } : { id, servicio: '(turno eliminado)' };
+        })
+      }))
+    });
+  } catch (err) { next(err); }
+});
+
+// ── POST /api/admin/pagos/:id/reembolsar → devolver la plata ──
+// Sin monto en el body = reembolso total. El front pide doble confirmación.
+router.post('/pagos/:id/reembolsar', authAdmin, async (req, res, next) => {
+  try {
+    const { reembolsarPago, estaConfigurado } = require('../services/mercadopago');
+    if (!estaConfigurado()) {
+      return res.status(503).json({ error: 'Mercado Pago no está configurado' });
+    }
+
+    const pago = await prisma.pago.findUnique({ where: { id: parseInt(req.params.id) } });
+    if (!pago) return res.status(404).json({ error: 'Pago no encontrado' });
+    if (pago.estado === 'refunded') {
+      return res.status(400).json({ error: 'Ese pago ya fue reembolsado' });
+    }
+    if (pago.estado !== 'approved') {
+      return res.status(400).json({ error: `No se puede reembolsar un pago en estado "${pago.estado}"` });
+    }
+
+    const monto = req.body?.monto !== undefined ? Number(req.body.monto) : undefined;
+    if (monto !== undefined && (!Number.isFinite(monto) || monto <= 0 || monto > Number(pago.monto))) {
+      return res.status(400).json({ error: 'Monto de reembolso inválido' });
+    }
+
+    try {
+      await reembolsarPago(pago.mp_payment_id, monto);
+    } catch (errMp) {
+      const detalle = errMp.response?.data?.message || errMp.message;
+      console.error('❌ Error reembolsando en MP:', detalle);
+      return res.status(502).json({ error: 'Mercado Pago rechazó el reembolso: ' + detalle });
+    }
+
+    // Un reembolso parcial deja el pago aprobado; solo el total lo marca devuelto.
+    const esTotal = monto === undefined || monto >= Number(pago.monto);
+    const actualizado = await prisma.pago.update({
+      where: { id: pago.id },
+      data: { estado: esTotal ? 'refunded' : 'approved' }
+    });
+
+    res.json({ success: true, estado: actualizado.estado, reembolsado: monto ?? Number(pago.monto) });
+  } catch (err) { next(err); }
+});
+
+// ── GET /api/admin/reservas-pendientes → holds activos ──
+// Visibilidad para Daniela: si un horario "no aparece", puede ser un pago en curso.
+router.get('/reservas-pendientes', authAdmin, async (req, res, next) => {
+  try {
+    const reservas = await prisma.reservaPendiente.findMany({
+      where: { estado: 'activa', expira_at: { gt: new Date() } },
+      orderBy: { expira_at: 'asc' },
+      select: {
+        id: true, external_ref: true,
+        cliente_nombre: true, cliente_apellido: true, cliente_telefono: true,
+        fecha: true, hora_inicio: true, hora_fin: true,
+        monto: true, tipo_pago: true, expira_at: true, created_at: true
+      }
+    });
+    res.json(reservas.map(r => ({ ...r, monto: Number(r.monto) })));
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

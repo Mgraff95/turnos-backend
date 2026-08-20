@@ -15,6 +15,27 @@ function formatearFecha(fecha) {
   return `${dia} ${dd}/${mm}`;
 }
  
+// ── Formatear pesos ────────────────────────────────────
+function pesos(n) {
+  return '$' + Number(n).toLocaleString('es-AR');
+}
+ 
+// ── Bloque de pago para los mensajes de confirmación ───
+// `total` es lo que sale la reserva completa; `abonado` lo que ya pagó.
+// Devuelve string vacío si el turno no pasó por pago, así los mensajes de
+// las reservas sin cobro quedan exactamente como estaban.
+function bloquePago(turno, total) {
+  if (!turno || !turno.pago_realizado || !turno.pago_monto) return '';
+  const abonado = Number(turno.pago_monto);
+  if (turno.pago_tipo === 'total') {
+    return `\n💳 Servicio abonado en su totalidad: ${pesos(abonado)}\n`;
+  }
+  const saldo = Math.max(0, Number(total || 0) - abonado);
+  let txt = `\n💳 Seña abonada: ${pesos(abonado)}\n`;
+  if (saldo > 0) txt += `💵 Resta abonar en el local: ${pesos(saldo)}\n`;
+  return txt;
+}
+ 
 // ── Enviar mensaje genérico via Wassenger ──────────────
 async function enviarWhatsApp(telefono, mensaje) {
   if (!WASSENGER_TOKEN) {
@@ -75,6 +96,11 @@ async function enviarConfirmacion(turno) {
     }
   }
  
+  // Si la clienta abonó por adelantado, se le aclara cuánto pagó y cuánto resta.
+  const totalTurno = Number(turno.servicio.precio_pesos) +
+    (turno.extras || []).reduce((s, e) => s + Number(e.precio_pesos), 0);
+  mensaje += bloquePago(turno, totalTurno);
+ 
   mensaje +=
     `\nPodés ver o modificar tu turno en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
@@ -115,7 +141,8 @@ async function enviarConfirmacionGrupo(turnos) {
     `📅 ${fechaStr}\n` +
     `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
     cuerpo + `\n\n` +
-    (hayVariable ? `💰 Total (desde): $${total}\n💡 Los precios "desde" son de referencia y pueden variar según la complejidad del diseño.\n\n` : `💰 Total: $${total}\n\n`) +
+    (hayVariable ? `💰 Total (desde): $${total}\n💡 Los precios "desde" son de referencia y pueden variar según la complejidad del diseño.\n` : `💰 Total: $${total}\n`) +
+    bloquePago(primero, total) + `\n` +
     `Podés ver o cancelar tus turnos en:\n` +
     `${process.env.FRONTEND_URL}/mistura`;
  
@@ -124,10 +151,21 @@ async function enviarConfirmacionGrupo(turnos) {
  
 // ── Recordatorio con opciones (24h antes) ─────────────
 async function enviarRecordatorio(turno) {
+  // Si dejó seña, se le recuerda cuánto le queda por pagar en el local, para
+  // que llegue con el monto justo.
+  let saldo = '';
+  if (turno.pago_realizado && turno.pago_monto && turno.pago_tipo === 'sena') {
+    const resta = Number(turno.servicio.precio_pesos) - Number(turno.pago_monto);
+    if (resta > 0) saldo = `💵 Te resta abonar ${pesos(resta)} en el local.\n\n`;
+  } else if (turno.pago_realizado && turno.pago_tipo === 'total') {
+    saldo = `💳 Este turno ya está abonado en su totalidad.\n\n`;
+  }
+ 
   const mensaje =
     `⏰ ¡Recordatorio!\n\n` +
     `Tenés turno mañana a las ${turno.hora_inicio} hs ` +
     `para ${turno.servicio.nombre}.\n\n` +
+    saldo +
     `Respondé con:\n` +
     `*1* ✅ Confirmo asistencia\n` +
     `*2* ❌ No puedo ir\n\n` +
