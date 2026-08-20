@@ -7,6 +7,9 @@ const crypto = require('crypto');
 const MP_API = 'https://api.mercadopago.com';
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET;
+// Opcional: la clave del modo de prueba, para poder probar el circuito completo
+// antes de tener las credenciales productivas.
+const MP_WEBHOOK_SECRET_TEST = process.env.MP_WEBHOOK_SECRET_TEST;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://turnos-backend-production-149e.up.railway.app';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://turnos.danielayanetbeauty.com';
 
@@ -144,8 +147,14 @@ async function reembolsarPago(paymentId, monto) {
 // Ojo: la clave secreta es distinta entre el entorno de prueba y el productivo.
 // Mezclarlas hace que la validación falle sin ningún mensaje útil.
 function validarFirmaWebhook(xSignature, xRequestId, dataId) {
-  if (!MP_WEBHOOK_SECRET) {
-    console.error('❌ MP_WEBHOOK_SECRET no configurado: se rechaza el webhook');
+  // Mercado Pago genera una clave secreta distinta para el modo de prueba y
+  // para el productivo. Se aceptan las dos si están configuradas, así se puede
+  // probar con credenciales de prueba sin tener que cambiar la variable de
+  // entorno el día que se sale a producción (y sin riesgo de equivocarse en el
+  // cambio). Ambas son claves propias: aceptar las dos no abre nada a terceros.
+  const secretos = [MP_WEBHOOK_SECRET, MP_WEBHOOK_SECRET_TEST].filter(Boolean);
+  if (secretos.length === 0) {
+    console.error('❌ Ninguna clave secreta de webhook configurada: se rechaza');
     return false;
   }
   if (!xSignature || !xRequestId || dataId === undefined || dataId === null) return false;
@@ -159,17 +168,18 @@ function validarFirmaWebhook(xSignature, xRequestId, dataId) {
   if (!ts || !hash) return false;
 
   const manifest = `id:${String(dataId).toLowerCase()};request-id:${xRequestId};ts:${ts};`;
-  const calculado = crypto
-    .createHmac('sha256', MP_WEBHOOK_SECRET)
-    .update(manifest)
-    .digest('hex');
+  const recibido = Buffer.from(hash, 'utf8');
 
-  // timingSafeEqual explota si los buffers miden distinto, así que se compara
-  // el largo primero.
-  const a = Buffer.from(calculado, 'utf8');
-  const b = Buffer.from(hash, 'utf8');
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+  return secretos.some(secreto => {
+    const calculado = Buffer.from(
+      crypto.createHmac('sha256', secreto).update(manifest).digest('hex'),
+      'utf8'
+    );
+    // timingSafeEqual explota si los buffers miden distinto: se compara el
+    // largo primero.
+    if (calculado.length !== recibido.length) return false;
+    return crypto.timingSafeEqual(calculado, recibido);
+  });
 }
 
 module.exports = {
