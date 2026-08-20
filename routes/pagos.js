@@ -154,13 +154,23 @@ router.post('/checkout', async (req, res, next) => {
       ? reserva.items[0].servicio.nombre
       : `${reserva.items.length} servicios · Daniela Yanet Beauty`;
 
+    const fechaLegible = new Date(fecha + 'T12:00:00-03:00').toLocaleDateString('es-AR', {
+      day: '2-digit', month: '2-digit', year: 'numeric'
+    });
+
     let preferencia;
     try {
       preferencia = await crearPreferencia({
         externalRef,
         titulo: cotizacion.tipo === 'sena' ? `Seña · ${titulo}` : titulo,
+        descripcion: `${titulo} · turno del ${fechaLegible} a las ${hora_inicio} hs`,
         monto: cotizacion.monto,
-        expiraAt
+        expiraAt,
+        cliente: {
+          nombre: reserva.turnosData[0].cliente_nombre,
+          apellido: reserva.turnosData[0].cliente_apellido,
+          telefono: reserva.turnosData[0].cliente_telefono
+        }
       });
     } catch (errMp) {
       await prisma.reservaPendiente.delete({ where: { id: holdCreado.id } }).catch(() => {});

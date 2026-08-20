@@ -48,14 +48,20 @@ function aISOArgentina(fecha) {
 
 // ── Crear preferencia de Checkout Pro ──────────────────
 // Devuelve { id, init_point, sandbox_init_point }.
-async function crearPreferencia({ externalRef, titulo, monto, expiraAt, clienteEmail }) {
+// Los campos de item y payer están completos a propósito, no por prolijidad:
+// el checklist de calidad de Mercado Pago los evalúa uno por uno, y el puntaje
+// de esa evaluación es lo que habilita las credenciales de producción.
+async function crearPreferencia({ externalRef, titulo, descripcion, monto, expiraAt, cliente }) {
   if (!estaConfigurado()) {
     throw Object.assign(new Error('MP_NO_CONFIGURADO'), { status: 503 });
   }
 
   const preferencia = {
     items: [{
+      id: externalRef,
       title: titulo,
+      description: descripcion || titulo,
+      category_id: 'services',
       quantity: 1,
       unit_price: Number(monto),
       currency_id: 'ARS'
@@ -79,8 +85,22 @@ async function crearPreferencia({ externalRef, titulo, monto, expiraAt, clienteE
     binary_mode: true
   };
 
-  if (clienteEmail) {
-    preferencia.payer = { email: clienteEmail };
+  // Datos del pagador. El email no se pide en la reserva (lo pide Mercado Pago
+  // en su propia pantalla), pero nombre, apellido y teléfono sí los tenemos y
+  // suman al puntaje de calidad además de reducir contracargos.
+  if (cliente) {
+    preferencia.payer = {};
+    if (cliente.nombre) preferencia.payer.first_name = cliente.nombre;
+    if (cliente.apellido) preferencia.payer.last_name = cliente.apellido;
+    if (cliente.email) preferencia.payer.email = cliente.email;
+    if (cliente.telefono) {
+      // MP espera código de área y número por separado. Los teléfonos se
+      // guardan como 10 dígitos: los primeros son el área.
+      const tel = String(cliente.telefono).replace(/\D/g, '');
+      if (tel.length === 10) {
+        preferencia.payer.phone = { area_code: tel.slice(0, 2), number: tel.slice(2) };
+      }
+    }
   }
 
   const { data } = await axios.post(
