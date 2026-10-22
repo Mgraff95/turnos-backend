@@ -14,8 +14,10 @@ function errorHandler(err, req, res, next) {
   }
 
   // Error genérico
+  // `publico` es el mensaje pensado para quien usa la web; `message` suele ser
+  // un codigo interno (SERVICIOS_DE_DISTINTAS_PROFESIONALES y similares).
   res.status(err.status || 500).json({
-    error: err.message || 'Error interno del servidor'
+    error: err.publico || err.message || 'Error interno del servidor'
   });
 }
 

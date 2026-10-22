@@ -14,7 +14,9 @@ function responderErrorReserva(res, err) {
     TELEFONO_INVALIDO: [400, 'Teléfono inválido. Ingresá 10 dígitos (ej: 1123456789)'],
     SIN_SERVICIOS: [400, 'No se indicó ningún servicio'],
     SERVICIO_INVALIDO: [400, 'Servicio inválido'],
-    SERVICIO_NO_ENCONTRADO: [404, 'Servicio no encontrado']
+    SERVICIO_NO_ENCONTRADO: [404, 'Servicio no encontrado'],
+    SERVICIOS_DE_DISTINTAS_PROFESIONALES: [400, 'No se pueden combinar servicios de distintas profesionales en una misma reserva'],
+    PROFESIONAL_NO_ENCONTRADA: [404, 'Profesional no encontrada']
   };
   const entrada = mapa[err.message];
   if (!entrada) return false;

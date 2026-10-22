@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
-const { validarTelefono, resolverExtras } = require('../lib/reservas');
+const { validarTelefono, resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -83,11 +83,20 @@ router.post('/', async (req, res, next) => {
     const tokenExpires = new Date();
     tokenExpires.setDate(tokenExpires.getDate() + 30);
  
+    // Profesional del turno y plata congelada (precio y comisión al momento de
+    // reservar). Sale del helper compartido para que los cinco lugares que
+    // crean turnos resuelvan la plata del mismo modo.
+    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata([
+      { servicio, extras: extrasValidos }
+    ]);
+
     const turno = await verificarYReservar({
       cliente_nombre: nombre.trim(),
       cliente_apellido: apellido.trim(),
       cliente_telefono: telLimpio,
       servicio_id: parseInt(servicio_id),
+      profesional_id: profesionalId,
+      ...plataPorServicioId[servicio.id],
       fecha: new Date(fecha),
       hora_inicio,
       hora_fin: horaFin,
@@ -162,6 +171,11 @@ router.post('/multi', async (req, res, next) => {
  
     // Separar los servicios en "secuenciales" (se encadenan uno atrás del otro) e
     // "intercalados" (comparten horario con su servicio ancla, sin sumar tiempo)
+    // Profesional unica de la reserva + plata congelada por servicio. Se
+    // resuelve ANTES de armar el bloque para que una reserva que mezcla
+    // profesionales falle antes de calcular horarios.
+    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata(items);
+
     const { secuenciales, intercalados, duracionEfectivaPorId } = resolverBloqueConIntercalados(items);
  
     const grupoReserva = uuidv4();
@@ -186,6 +200,8 @@ router.post('/multi', async (req, res, next) => {
         cliente_apellido: apellido.trim(),
         cliente_telefono: telLimpio,
         servicio_id: item.servicio.id,
+        profesional_id: profesionalId,
+        ...plataPorServicioId[item.servicio.id],
         fecha: new Date(fecha),
         hora_inicio: inicio,
         hora_fin: finReal,
@@ -210,6 +226,8 @@ router.post('/multi', async (req, res, next) => {
         cliente_apellido: apellido.trim(),
         cliente_telefono: telLimpio,
         servicio_id: item.servicio.id,
+        profesional_id: profesionalId,
+        ...plataPorServicioId[item.servicio.id],
         fecha: new Date(fecha),
         hora_inicio: inicio,
         hora_fin: fin,
@@ -567,6 +585,14 @@ router.patch('/:id', async (req, res, next) => {
     const fecha = nueva_fecha || turno.fecha.toISOString().split('T')[0];
     const horaInicio = nueva_hora_inicio || turno.hora_inicio;
     const horaFin = calcularHoraFin(horaInicio, servicio.duracion_minutos);
+
+    // Si cambio el servicio, la profesional y la comision tienen que cambiar
+    // con el: si no, el turno queda con la profesional del servicio viejo y la
+    // liquidacion miente. El turno recreado no arrastra extras, asi que la
+    // plata se calcula solo sobre el servicio.
+    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata([
+      { servicio, extras: [] }
+    ]);
  
     const turnoActualizado = await prisma.$transaction(async (tx) => {
       await tx.turno.update({
@@ -580,6 +606,8 @@ router.patch('/:id', async (req, res, next) => {
           cliente_apellido: turno.cliente_apellido,
           cliente_telefono: turno.cliente_telefono,
           servicio_id: servicioId,
+          profesional_id: profesionalId,
+          ...plataPorServicioId[servicio.id],
           fecha: new Date(fecha),
           hora_inicio: horaInicio,
           hora_fin: horaFin,
