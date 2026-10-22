@@ -361,7 +361,17 @@ router.get('/cancelar', async (req, res, next) => {
       const franjas = [...new Set(grupo.map(t => determinarFranja(t.hora_inicio)))];
       for (const franja of franjas) {
         const esperando = await prisma.waitlist.findMany({
-          where: { fecha: primero.fecha, franja, activo: true, notificado: false },
+          // Solo a quien espera un servicio de la MISMA profesional: lo que se
+          // liberó es un rato de su agenda. Sin este filtro, una cancelación de
+          // una profesional le avisaría "se liberó un lugar" a una clienta que
+          // espera turno con otra, cuya agenda no se movió.
+          where: {
+            fecha: primero.fecha,
+            franja,
+            activo: true,
+            notificado: false,
+            servicio: { profesional_id: primero.profesional_id }
+          },
           include: { servicio: true }
         });
         for (const entrada of esperando) {
@@ -401,7 +411,14 @@ router.get('/cancelar', async (req, res, next) => {
     // Notificar waitlist
     const franja = determinarFranja(turno.hora_inicio);
     const esperando = await prisma.waitlist.findMany({
-      where: { fecha: turno.fecha, franja, activo: true, notificado: false },
+      // Mismo criterio que en la cancelación de grupo: solo la misma profesional.
+      where: {
+        fecha: turno.fecha,
+        franja,
+        activo: true,
+        notificado: false,
+        servicio: { profesional_id: turno.profesional_id }
+      },
       include: { servicio: true }
     });
     for (const entrada of esperando) {
@@ -438,7 +455,8 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
     const horarios = await obtenerHorariosDisponibles(
       new Date(fecha),
       servicio.duracion_minutos + minutosExtra,
-      parseInt(servicio_id)
+      parseInt(servicio_id),
+      servicio.profesional_id
     );
  
     res.json({ fecha, servicio: servicio.nombre, horarios });
@@ -474,7 +492,14 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
  
     const { duracionTotal } = resolverBloqueConIntercalados(items);
  
-    const horarios = await obtenerHorariosDisponiblesBloque(new Date(fecha), duracionTotal);
+    // Todos los items son de la misma profesional: el frontend no deja
+    // combinarlas y lib/reservas.js lo rechaza al reservar. Acá alcanza con
+    // tomar la del primero para saber contra qué agenda medir.
+    const horarios = await obtenerHorariosDisponiblesBloque(
+      new Date(fecha),
+      duracionTotal,
+      items[0].servicio.profesional_id
+    );
     res.json({ fecha, duracion_total: duracionTotal, horarios });
   } catch (err) { next(err); }
 });
