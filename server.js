@@ -18,6 +18,7 @@ app.use(cors({
 app.use(express.json());
 
 // ── Rutas ──────────────────────────────────────
+app.use('/api/profesionales', require('./routes/profesionales'));
 app.use('/api/servicios', require('./routes/servicios'));
 app.use('/api/extras', require('./routes/extras'));
 app.use('/api/horarios', require('./routes/horarios'));
@@ -26,6 +27,7 @@ app.use('/api/pagos', require('./routes/pagos'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin', require('./routes/pagos-admin'));
 app.use('/api/whatsapp/webhook', require('./routes/webhook'));
+app.use('/api/admin/liquidacion', require('./routes/liquidacion'));
 app.use('/api/admin/clientes', require('./routes/clientes'));
 app.use('/api/waitlist', require('./routes/waitlist'));
 
