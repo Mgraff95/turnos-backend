@@ -32,8 +32,10 @@ model Profesional {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  // Las relaciones inversas (servicios, horarios, bloqueos, turnos) se agregan
-  // junto con las FK del otro lado: Prisma exige ambos lados a la vez.
+  servicios Servicio[]
+  horarios  HorarioConfig[]
+  bloqueos  BloqueCerrado[]
+  turnos    Turno[]
 
   @@map("profesionales")
 }
@@ -50,12 +52,23 @@ model Servicio {
   max_simultaneos        Int     @default(2)
   incluye_nota     Boolean  @default(false)
   nota             String?
+
+  // Dueña del servicio. El @default(1) es TEMPORAL: hace el backfill a Daniela
+  // de las 18 filas que ya existen. Se quita en el último paso de la migración,
+  // para que un turno sin profesional explícita falle en vez de caer en Daniela
+  // en silencio.
+  profesional_id   Int      @default(1)
+  // null = heredar el % de la profesional. 0 = 0% y NO hereda.
+  comision_pct     Decimal? @db.Decimal(5, 2)
+
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
-  turnos   Turno[]
-  waitlist Waitlist[]
+  profesional Profesional @relation(fields: [profesional_id], references: [id])
+  turnos      Turno[]
+  waitlist    Waitlist[]
 
+  @@index([profesional_id])
   @@map("servicios")
 }
 
@@ -66,9 +79,17 @@ model HorarioConfig {
   hora_inicio              String   @default("09:00")
   hora_fin                 String   @default("18:00")
   espacio_entre_turnos_min Int      @default(10)
+
+  // De quién es este rango. Cada profesional tiene su propia agenda y su propio
+  // espacio entre turnos. @default(1) temporal, igual que en servicios.
+  profesional_id           Int      @default(1)
+
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt
 
+  profesional Profesional @relation(fields: [profesional_id], references: [id])
+
+  @@index([profesional_id, dia_semana])
   @@map("horarios_config")
 }
 
@@ -81,8 +102,16 @@ model BloqueCerrado {
   hora_inicio String?  // null = bloquea el día completo
   hora_fin    String?  // null = bloquea el día completo
   motivo      String?
+
+  // Alcance del bloqueo. null = cierra el estudio para TODAS (un feriado, que
+  // es el comportamiento de siempre). Con valor, cierra solo esa agenda.
+  profesional_id Int?
+
   created_at  DateTime @default(now())
 
+  profesional Profesional? @relation(fields: [profesional_id], references: [id])
+
+  @@index([profesional_id])
   @@map("bloques_cerrados")
 }
 
@@ -125,11 +154,31 @@ model Turno {
   token_expires_at  DateTime @default(dbgenerated("NOW() + INTERVAL '30 days'"))
   origen            String   @default("web") // web | manual
   recordatorio_enviado Boolean @default(false)
+
+  // Quién atendió. Redundante respecto de servicio.profesional_id a propósito:
+  // la agenda y la liquidación filtran por acá todo el tiempo, y si un servicio
+  // cambia de dueña el histórico tiene que quedarse con quien lo hizo.
+  // @default(1) temporal, igual que en servicios.
+  profesional_id    Int      @default(1)
+
+  // Foto de la plata al momento de reservar. NO se recalculan nunca: si Daniela
+  // sube un precio, una liquidación ya compartida tiene que seguir diciendo lo
+  // mismo. Nullable porque los turnos que ya existen no las tienen.
+  precio_base       Decimal? @db.Decimal(10, 2)
+  comision_pct      Decimal? @db.Decimal(5, 2)
+  comision_monto    Decimal? @db.Decimal(10, 2)
+
+  // false = no entra en la liquidación (la clienta no vino). El turno sigue
+  // confirmado para todo lo demás: ocupó el horario y cuenta en su histórico.
+  liquidable        Boolean  @default(true)
+
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
-  servicio Servicio @relation(fields: [servicio_id], references: [id])
+  servicio    Servicio    @relation(fields: [servicio_id], references: [id])
+  profesional Profesional @relation(fields: [profesional_id], references: [id])
 
+  @@index([profesional_id, fecha])
   @@index([fecha, estado])
   @@index([cliente_telefono, cliente_apellido])
   @@index([token_acceso])
@@ -222,6 +271,11 @@ model ReservaPendiente {
   hora_inicio      String
   hora_fin         String
   payload          Json
+  // Agenda que este hold congela. El checkout lo setea siempre; null queda solo
+  // como comportamiento defensivo para filas viejas (null bloquea a todas), no
+  // como caso normal. Sin esto, un pago en curso de Daniela congelaría la
+  // agenda de Elsa. Sin relación: es una tabla transitoria.
+  profesional_id   Int?
   es_multi         Boolean  @default(false)
   monto            Decimal  @db.Decimal(10, 2)
   tipo_pago        String
