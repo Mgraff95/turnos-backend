@@ -99,6 +99,9 @@ router.post('/checkout', async (req, res, next) => {
         where: {
           fecha: fechaDate,
           estado: 'confirmado',
+          // Solo la agenda de esta profesional: un turno de otra no impide
+          // congelar este horario.
+          profesional_id: reserva.profesionalId,
           OR: [
             { hora_inicio: { lte: reserva.rangoInicio }, hora_fin: { gt: reserva.rangoInicio } },
             { hora_inicio: { lt: reserva.rangoFin }, hora_fin: { gte: reserva.rangoFin } },
@@ -112,7 +115,7 @@ router.post('/checkout', async (req, res, next) => {
       // ¿Y otro hold activo?
       const holdEnConflicto = await tx.reservaPendiente.findFirst({
         where: {
-          ...whereHoldsActivos(fechaDate),
+          ...whereHoldsActivos(fechaDate, reserva.profesionalId),
           OR: [
             { hora_inicio: { lte: reserva.rangoInicio }, hora_fin: { gt: reserva.rangoInicio } },
             { hora_inicio: { lt: reserva.rangoFin }, hora_fin: { gte: reserva.rangoFin } },
@@ -130,6 +133,7 @@ router.post('/checkout', async (req, res, next) => {
           cliente_apellido: reserva.turnosData[0].cliente_apellido,
           cliente_telefono: reserva.turnosData[0].cliente_telefono,
           fecha: fechaDate,
+          profesional_id: reserva.profesionalId,
           hora_inicio: reserva.rangoInicio,
           hora_fin: reserva.rangoFin,
           payload: {
