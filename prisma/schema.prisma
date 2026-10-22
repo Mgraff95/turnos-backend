@@ -13,6 +13,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Quién atiende. Cada servicio, rango horario y turno cuelga de una profesional,
+// y la disponibilidad se calcula por separado para cada una: dos profesionales
+// pueden tener turnos a la misma hora sin bloquearse.
+//
+// comision_pct_default = null significa que esa profesional ES el estudio: la
+// plata de sus turnos es del estudio y no hay nada que liquidarle. Con valor,
+// la plata la cobra ella y le debe ese % al estudio.
+model Profesional {
+  id         Int     @id @default(autoincrement())
+  nombre     String
+  activo     Boolean @default(true)
+  orden      Int     @default(0)
+  telefono   String? // para mandarle la liquidación por WhatsApp
+
+  comision_pct_default Decimal? @db.Decimal(5, 2)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Las relaciones inversas (servicios, horarios, bloqueos, turnos) se agregan
+  // junto con las FK del otro lado: Prisma exige ambos lados a la vez.
+
+  @@map("profesionales")
+}
+
 model Servicio {
   id               Int      @id @default(autoincrement())
   nombre           String
