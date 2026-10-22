@@ -83,6 +83,11 @@ ensucia la liquidación. Sin default, ese bug explota con un error.
 Esta es la **Task 14** del plan y es la única que dejé sin hacer a propósito:
 hacerla antes del deploy rompe el backfill del paso 4.
 
+> **No corras `npm run db:seed`.** Ese script ya estaba roto antes de esta rama
+> (hace `upsert` de horarios por `dia_semana`, que dejó de ser único) y ahora
+> además crearía rangos sin profesional. Es para una base vacía, no para
+> producción. El único seed que hay que correr es el del paso 3.
+
 ## 8. Cargar los datos de Elsa
 
 Desde el panel, pestaña **Equipo** y **Servicios**:
@@ -141,3 +146,12 @@ estaba en el spec: la waitlist avisaba cruzado entre profesionales.
 - **Cobro online para Elsa.** Mientras su plata sea suya, sus servicios quedan
   fuera de Mercado Pago. Si algún día cobra por el MP del estudio, hay que
   revisar §6.3 del spec.
+
+- **Antes de prender `cobro_activo`, revisar `lib/pagos-proceso.js:170`.** Un
+  hold creado con el código viejo no tiene `profesional_id` en su payload, así
+  que al procesarse con el código nuevo tira `PROFESIONAL_REQUERIDA`. Ese error
+  no cae en `resolverConflicto`, así que el webhook de Mercado Pago devolvería
+  500 y reintentaría: la plata entró y no hay turno ni registro del conflicto.
+  Hoy no puede pasar porque el cobro está apagado y no hay holds, y por eso no
+  lo arreglé en esta rama. Si lo prendés, mapeá `PROFESIONAL_REQUERIDA` a
+  `resolverConflicto` primero.
