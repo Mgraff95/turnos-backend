@@ -88,7 +88,13 @@ router.get('/turnos', authAdmin, async (req, res, next) => {
  
     const turnos = await prisma.turno.findMany({
       where,
-      include: { servicio: true },
+      // La profesional viaja con el turno: la agenda la usa para teñir y para
+      // mostrar el nombre, y Métricas para decidir si el ingreso del estudio es
+      // el precio completo o solo la comisión.
+      include: {
+        servicio: true,
+        profesional: { select: { id: true, nombre: true, comision_pct_default: true } }
+      },
       orderBy: [{ fecha: 'asc' }, { hora_inicio: 'asc' }]
     });
  
@@ -436,6 +442,27 @@ router.post('/test-recordatorio/:turnoId', authAdmin, async (req, res, next) => 
   } catch (err) { next(err); }
 });
  
+// ── Admin: marcar un turno como liquidable o no ──
+// Se apaga cuando la clienta no vino: el turno sigue confirmado (ocupó el
+// horario, cuenta en su histórico) pero no entra en la liquidación, para no
+// cobrarle comisión a la profesional por un servicio que no hizo.
+//
+// Endpoint aparte del PATCH /turnos/:id general, que reagenda y revalida
+// disponibilidad: acá no hay nada que revalidar.
+router.patch('/turnos/:id/liquidable', authAdmin, async (req, res, next) => {
+  try {
+    const { liquidable } = req.body;
+    if (typeof liquidable !== 'boolean') {
+      return res.status(400).json({ error: 'liquidable tiene que ser true o false' });
+    }
+    const turno = await prisma.turno.update({
+      where: { id: parseInt(req.params.id) },
+      data: { liquidable }
+    });
+    res.json({ success: true, liquidable: turno.liquidable });
+  } catch (err) { next(err); }
+});
+
 // ── Admin: Cancelar turno ──────────────────────
 router.delete('/turnos/:id', authAdmin, async (req, res, next) => {
   try {
