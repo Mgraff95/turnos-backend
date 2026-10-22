@@ -38,15 +38,21 @@ function determinarFranja(horaInicio) {
  
 // ── Notificar/desactivar waitlist para las franjas de un turno tomado ──
 async function procesarWaitlistTomado(fecha, franja, turnoParaNotificar) {
+  // Acotado a la agenda de la profesional del turno que se tomo. Sin el filtro,
+  // llenar un hueco de una profesional daba de baja (activo: false) las
+  // entradas de quien esperaba a OTRA, en silencio y para siempre, aunque esa
+  // otra agenda siguiera con lugar.
+  const deEstaProfesional = { servicio: { profesional_id: turnoParaNotificar.profesional_id } };
+
   const waitlistMatch = await prisma.waitlist.findFirst({
-    where: { fecha, franja, activo: true, notificado: true }
+    where: { fecha, franja, activo: true, notificado: true, ...deEstaProfesional }
   });
   if (waitlistMatch) {
     notificarTurnoTomadoWaitlist(turnoParaNotificar).catch(err =>
       console.error('Error notificando waitlist a Daniela:', err.message)
     );
     await prisma.waitlist.updateMany({
-      where: { fecha, franja, activo: true },
+      where: { fecha, franja, activo: true, ...deEstaProfesional },
       data: { activo: false }
     }).catch(() => {});
   }
@@ -461,8 +467,14 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
     const { extras } = req.query;
  
     const servicio = await prisma.servicio.findUnique({
-      where: { id: parseInt(servicio_id) }
+      where: { id: parseInt(servicio_id) },
+      include: { profesional: { select: { activo: true } } }
     });
+    // Un servicio dado de baja, o de una profesional desactivada, no ofrece
+    // horarios. Antes este endpoint no chequeaba ni lo uno ni lo otro.
+    if (servicio && (!servicio.activo || !servicio.profesional?.activo)) {
+      return res.json({ fecha, servicio: servicio.nombre, horarios: [] });
+    }
     if (!servicio) {
       return res.status(404).json({ error: 'Servicio no encontrado' });
     }
@@ -495,9 +507,15 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
     const items = [];
     for (const item of servicios) {
       const sid = parseInt(item.servicio_id);
-      const servicio = await prisma.servicio.findUnique({ where: { id: sid } });
+      const servicio = await prisma.servicio.findUnique({
+        where: { id: sid },
+        include: { profesional: { select: { activo: true } } }
+      });
       if (!servicio) {
         return res.status(404).json({ error: `Servicio ${item.servicio_id} no encontrado` });
+      }
+      if (!servicio.activo || !servicio.profesional?.activo) {
+        return res.json({ fecha, duracion_total: 0, horarios: [] });
       }
       const extrasValidos = await resolverExtras(item.extras, sid);
       const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
@@ -582,6 +600,20 @@ router.patch('/:id', async (req, res, next) => {
  
     const servicioId = nuevo_servicio_id ? parseInt(nuevo_servicio_id) : turno.servicio_id;
     const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
+    if (!servicio || !servicio.activo) {
+      return res.status(404).json({ error: 'Servicio no encontrado' });
+    }
+    // Este endpoint es publico (la clienta entra con su token) y crea el turno
+    // nuevo sin pasar por verificarYReservar, asi que no valida disponibilidad.
+    // Permitir cambiar a un servicio de OTRA profesional dejaria a la clienta
+    // mover su turno a una agenda ajena, en un horario que esa profesional
+    // quiza no trabaje, y arrastrando la comision. Para cambiar de profesional
+    // hay que cancelar y reservar de nuevo.
+    if (servicio.profesional_id !== turno.profesional_id) {
+      return res.status(400).json({
+        error: 'Para cambiar a un servicio de otra profesional hay que reservar un turno nuevo'
+      });
+    }
     const fecha = nueva_fecha || turno.fecha.toISOString().split('T')[0];
     const horaInicio = nueva_hora_inicio || turno.hora_inicio;
     const horaFin = calcularHoraFin(horaInicio, servicio.duracion_minutos);
