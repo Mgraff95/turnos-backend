@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
-const { resolverExtras } = require('../lib/reservas');
+const { resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
 const { authAdmin } = require('../middleware/auth');
 const {
   calcularHoraFin,
@@ -123,11 +123,17 @@ router.post('/turnos', authAdmin, async (req, res, next) => {
     const tokenExpires = new Date();
     tokenExpires.setDate(tokenExpires.getDate() + 30);
  
+    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata([
+      { servicio, extras: extrasValidos }
+    ]);
+
     const turno = await verificarYReservar({
       cliente_nombre: nombre.trim(),
       cliente_apellido: apellido.trim(),
       cliente_telefono: telLimpio,
       servicio_id: parseInt(servicio_id),
+      profesional_id: profesionalId,
+      ...plataPorServicioId[servicio.id],
       fecha: new Date(fecha),
       hora_inicio,
       hora_fin: horaFin,
@@ -195,6 +201,11 @@ router.post('/turnos/multi', authAdmin, async (req, res, next) => {
     }
  
     // Separar en secuenciales / intercalados (misma lógica que la reserva pública)
+    // Profesional unica de la reserva + plata congelada por servicio. Se
+    // resuelve ANTES de armar el bloque para que una reserva que mezcla
+    // profesionales falle antes de calcular horarios.
+    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata(items);
+
     const { secuenciales, intercalados, duracionEfectivaPorId } = resolverBloqueConIntercalados(items);
  
     const grupoReserva = uuidv4();
@@ -218,6 +229,8 @@ router.post('/turnos/multi', authAdmin, async (req, res, next) => {
         cliente_apellido: apellido.trim(),
         cliente_telefono: telLimpio,
         servicio_id: item.servicio.id,
+        profesional_id: profesionalId,
+        ...plataPorServicioId[item.servicio.id],
         fecha: new Date(fecha),
         hora_inicio: inicio,
         hora_fin: finReal,
@@ -243,6 +256,8 @@ router.post('/turnos/multi', authAdmin, async (req, res, next) => {
         cliente_apellido: apellido.trim(),
         cliente_telefono: telLimpio,
         servicio_id: item.servicio.id,
+        profesional_id: profesionalId,
+        ...plataPorServicioId[item.servicio.id],
         fecha: new Date(fecha),
         hora_inicio: inicio,
         hora_fin: fin,
@@ -323,11 +338,24 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
  
     const horaFin = calcularHoraFin(hora_inicio, servicio.duracion_minutos);
  
+    // Si cambio el servicio, la profesional y la comision se recalculan con el:
+    // si no, el turno queda con la profesional del servicio viejo y la
+    // liquidacion miente. El update conserva extras_ids, asi que entran en el
+    // precio base.
+    const extrasActuales = turnoActual.extras_ids?.length
+      ? await prisma.extra.findMany({ where: { id: { in: turnoActual.extras_ids } } })
+      : [];
+    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata([
+      { servicio, extras: extrasActuales }
+    ]);
+
     const turno = await verificarYActualizar(turnoId, {
       cliente_nombre: nombre.trim(),
       cliente_apellido: apellido.trim(),
       cliente_telefono: telLimpio,
       servicio_id: parseInt(servicio_id),
+      profesional_id: profesionalId,
+      ...plataPorServicioId[servicio.id],
       fecha: new Date(fecha),
       hora_inicio,
       hora_fin: horaFin
