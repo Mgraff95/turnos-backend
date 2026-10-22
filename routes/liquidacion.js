@@ -38,8 +38,13 @@ router.get('/', authAdmin, async (req, res, next) => {
       return res.status(400).json({ error: 'El rango de fechas está invertido' });
     }
 
+    const idProf = parseInt(profesional_id);
+    if (isNaN(idProf)) {
+      return res.status(400).json({ error: 'profesional_id inválido' });
+    }
+
     const profesional = await prisma.profesional.findUnique({
-      where: { id: parseInt(profesional_id) },
+      where: { id: idProf },
       select: { id: true, nombre: true, telefono: true, comision_pct_default: true }
     });
     if (!profesional) {

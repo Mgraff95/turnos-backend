@@ -20,13 +20,18 @@ function determinarFranja(horaInicio) {
 // ── Notificar waitlist cuando se libera un turno ──
 async function procesarWaitlist(turno) {
   const franja = determinarFranja(turno.hora_inicio);
- 
+
   const esperando = await prisma.waitlist.findMany({
     where: {
       fecha: turno.fecha,
       franja,
       activo: true,
-      notificado: false
+      notificado: false,
+      // Solo a quien espera un servicio de la MISMA profesional: lo que se
+      // libero es un rato de SU agenda. Sin esto, una cancelacion por WhatsApp
+      // de una profesional le avisaria "se libero un lugar" a una clienta que
+      // espera turno con otra, cuya agenda no se movio.
+      servicio: { profesional_id: turno.profesional_id }
     },
     include: { servicio: true }
   });

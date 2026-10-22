@@ -58,9 +58,17 @@ function datosDeServicio(body, { parcial } = {}) {
 // sus servicios dejan de tomar turnos sin tener que desactivarlos uno por uno.
 router.get('/', async (req, res, next) => {
   try {
+    // select explicito y no include: con include, Prisma devuelve TODOS los
+    // escalares de Servicio, incluido comision_pct. Ese porcentaje es el reparto
+    // de plata entre el estudio y la profesional, y este endpoint es publico.
     const servicios = await prisma.servicio.findMany({
       where: { activo: true, profesional: { activo: true } },
-      include: { profesional: { select: { id: true, nombre: true, orden: true } } },
+      select: {
+        id: true, nombre: true, duracion_minutos: true, precio_pesos: true, activo: true,
+        intercalable: true, intercalar_desde_min: true, servicios_compatibles: true,
+        max_simultaneos: true, incluye_nota: true, nota: true, profesional_id: true,
+        profesional: { select: { id: true, nombre: true, orden: true } }
+      },
       orderBy: [{ profesional: { orden: 'asc' } }, { nombre: 'asc' }]
     });
     res.json(servicios);
