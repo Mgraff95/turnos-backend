@@ -7,6 +7,7 @@ const { construirTurnosDeReserva } = require('../lib/reservas');
 const { verificarYReservar, verificarYReservarBloque, whereHoldsActivos } = require('../lib/availability');
 const { crearPreferencia, validarFirmaWebhook, estaConfigurado } = require('../services/mercadopago');
 const { procesarNotificacionPago } = require('../lib/pagos-proceso');
+const { demasiadoCerca, errorAntelacion } = require('../lib/fechas');
 
 // Traduce los errores del constructor de reservas a respuestas HTTP.
 function responderErrorReserva(res, err) {
@@ -56,6 +57,12 @@ router.post('/checkout', async (req, res, next) => {
 
     if (!nombre || !apellido || !telefono || !fecha || !hora_inicio) {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    // Antelacion minima, antes de cotizar y de congelar nada. Este endpoint es
+    // publico, asi que sin el guard se podria saltear la ventana pagando.
+    if (demasiadoCerca(fecha, hora_inicio)) {
+      return res.status(400).json({ error: errorAntelacion().publico });
     }
 
     // Normalizar a la forma de lista, igual que hace la cotización

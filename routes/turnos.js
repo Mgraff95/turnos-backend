@@ -4,6 +4,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { validarTelefono, resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
+const { demasiadoCerca, errorAntelacion } = require('../lib/fechas');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -71,7 +72,13 @@ router.post('/', async (req, res, next) => {
     if (!telLimpio) {
       return res.status(400).json({ error: 'Teléfono inválido. Ingresá 10 dígitos (ej: 1123456789)' });
     }
- 
+
+    // Antelacion minima. Solo en la web: las rutas del panel van con authAdmin
+    // y no pasan por aca, asi que Daniela puede cargar un turno para hoy.
+    if (demasiadoCerca(fecha, hora_inicio)) {
+      return res.status(400).json({ error: errorAntelacion().publico });
+    }
+
     const servicio = await prisma.servicio.findUnique({
       where: { id: parseInt(servicio_id) }
     });
@@ -152,12 +159,17 @@ router.post('/multi', async (req, res, next) => {
     if (!Array.isArray(servicios) || servicios.length < 2) {
       return res.status(400).json({ error: 'Una reserva múltiple necesita al menos 2 servicios' });
     }
- 
+
     const telLimpio = validarTelefono(telefono);
     if (!telLimpio) {
       return res.status(400).json({ error: 'Teléfono inválido. Ingresá 10 dígitos (ej: 1123456789)' });
     }
- 
+
+    // Antelacion minima. Solo en la web, igual que en el turno simple.
+    if (demasiadoCerca(fecha, hora_inicio)) {
+      return res.status(400).json({ error: errorAntelacion().publico });
+    }
+
     // Resolver cada servicio + sus extras, en el orden enviado
     const items = [];
     for (const item of servicios) {
@@ -464,7 +476,8 @@ router.get('/cancelar', async (req, res, next) => {
 router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
   try {
     const { fecha, servicio_id } = req.params;
-    const { extras } = req.query;
+    const { extras, sin_minimo } = req.query;
+    const opciones = { respetarAntelacion: sin_minimo !== '1' };
  
     const servicio = await prisma.servicio.findUnique({
       where: { id: parseInt(servicio_id) },
@@ -486,7 +499,8 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
       new Date(fecha),
       servicio.duracion_minutos + minutosExtra,
       parseInt(servicio_id),
-      servicio.profesional_id
+      servicio.profesional_id,
+      opciones
     );
  
     res.json({ fecha, servicio: servicio.nombre, horarios });
@@ -499,7 +513,8 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
 // (ej. PRP + Pies): esos no suman tiempo, comparten el horario del ancla.
 router.post('/disponibilidad-multi', async (req, res, next) => {
   try {
-    const { fecha, servicios } = req.body;
+    const { fecha, servicios, sin_minimo } = req.body;
+    const opciones = { respetarAntelacion: sin_minimo !== true };
     if (!fecha || !Array.isArray(servicios) || servicios.length === 0) {
       return res.status(400).json({ error: 'Faltan datos (fecha y servicios)' });
     }
@@ -534,7 +549,8 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
     const horarios = await obtenerHorariosDisponiblesBloque(
       new Date(fecha),
       duracionTotal,
-      items[0].servicio.profesional_id
+      items[0].servicio.profesional_id,
+      opciones
     );
     res.json({ fecha, duracion_total: duracionTotal, horarios });
   } catch (err) { next(err); }
