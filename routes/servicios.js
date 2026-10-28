@@ -23,6 +23,11 @@ function datosDeServicio(body, { parcial } = {}) {
   if (puesto('incluye_nota')) data.incluye_nota = !!body.incluye_nota;
   if (puesto('nota')) data.nota = body.nota || null;
 
+  // La camilla es un recurso del estudio, no de una profesional: hay una
+  // sola. Tildarla acá es lo que hace que el servicio bloquee a los de
+  // camilla de la otra agenda. Mientras esté en false no bloquea nada.
+  if (puesto('usa_camilla')) data.usa_camilla = !!body.usa_camilla;
+
   // Intercalación: es para que una MISMA profesional se haga cargo de dos de
   // sus propios servicios a la vez. No tiene nada que ver con el paralelismo
   // entre profesionales, que lo resuelve profesional_id.
