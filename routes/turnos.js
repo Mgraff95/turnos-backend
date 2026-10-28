@@ -4,7 +4,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { validarTelefono, resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
-const { demasiadoCerca, errorAntelacion } = require('../lib/fechas');
+const { demasiadoCerca, errorAntelacion, puedeModificarse, MENSAJES_MODIFICACION } = require('../lib/fechas');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -12,6 +12,7 @@ const {
   calcularHoraFin,
   verificarYReservar,
   verificarYReservarBloque,
+  verificarYActualizar,
   horaAMinutos,
   minutosAHora
 } = require('../lib/availability');
@@ -585,95 +586,68 @@ router.get('/mistura/:telefono/:apellido', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { token, nueva_fecha, nueva_hora_inicio, nuevo_servicio_id } = req.body;
- 
+    const { token, nueva_fecha, nueva_hora_inicio } = req.body;
+
     const turno = await prisma.turno.findUnique({
       where: { id: parseInt(id) },
       include: { servicio: true }
     });
- 
+
     if (!turno || turno.token_acceso !== token) {
       return res.status(404).json({ error: 'Turno no encontrado' });
     }
- 
+
     if (turno.estado !== 'confirmado') {
       return res.status(400).json({ error: 'Solo se pueden modificar turnos confirmados' });
     }
- 
-    // Por ahora, los turnos que forman parte de una reserva múltiple no se editan
-    // individualmente (mover uno desencadena el resto). Se cancela y se reserva de nuevo.
+
+    // Los turnos de una reserva múltiple no se mueven de a uno: romperían la
+    // continuidad del bloque. Para cambiarlos hay que cancelar y reservar.
     if (turno.grupo_reserva) {
       return res.status(400).json({ error: 'Este turno es parte de una reserva múltiple. Para cambiarlo, cancelalo y reservá de nuevo.' });
     }
- 
-    const ahora = new Date();
-    const fechaTurno = new Date(`${turno.fecha.toISOString().split('T')[0]}T${turno.hora_inicio}`);
-    const horasRestantes = (fechaTurno - ahora) / (1000 * 60 * 60);
- 
-    if (horasRestantes < 48) {
-      return res.status(400).json({ error: 'Solo podés modificar hasta 48h antes del turno' });
-    }
- 
-    const servicioId = nuevo_servicio_id ? parseInt(nuevo_servicio_id) : turno.servicio_id;
-    const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
-    if (!servicio || !servicio.activo) {
-      return res.status(404).json({ error: 'Servicio no encontrado' });
-    }
-    // Este endpoint es publico (la clienta entra con su token) y crea el turno
-    // nuevo sin pasar por verificarYReservar, asi que no valida disponibilidad.
-    // Permitir cambiar a un servicio de OTRA profesional dejaria a la clienta
-    // mover su turno a una agenda ajena, en un horario que esa profesional
-    // quiza no trabaje, y arrastrando la comision. Para cambiar de profesional
-    // hay que cancelar y reservar de nuevo.
-    if (servicio.profesional_id !== turno.profesional_id) {
-      return res.status(400).json({
-        error: 'Para cambiar a un servicio de otra profesional hay que reservar un turno nuevo'
-      });
-    }
+
     const fecha = nueva_fecha || turno.fecha.toISOString().split('T')[0];
     const horaInicio = nueva_hora_inicio || turno.hora_inicio;
-    const horaFin = calcularHoraFin(horaInicio, servicio.duracion_minutos);
 
-    // Si cambio el servicio, la profesional y la comision tienen que cambiar
-    // con el: si no, el turno queda con la profesional del servicio viejo y la
-    // liquidacion miente. El turno recreado no arrastra extras, asi que la
-    // plata se calcula solo sobre el servicio.
-    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata([
-      { servicio, extras: [] }
-    ]);
- 
-    const turnoActualizado = await prisma.$transaction(async (tx) => {
-      await tx.turno.update({
-        where: { id: parseInt(id) },
-        data: { estado: 'cancelado' }
+    // El original tiene que estar lejos Y el nuevo tambien. Ver puedeModificarse.
+    const permiso = puedeModificarse(turno, fecha, horaInicio);
+    if (!permiso.ok) {
+      return res.status(400).json({ error: MENSAJES_MODIFICACION[permiso.motivo] });
+    }
+
+    // Solo se mueve fecha y hora: el servicio no cambia, asi que la duracion,
+    // los extras, el precio congelado, la comision y la profesional quedan
+    // exactamente como estaban. No hay nada que recalcular ni que perder.
+    const horaFin = calcularHoraFin(horaInicio, turno.servicio.duracion_minutos);
+
+    let turnoActualizado;
+    try {
+      // verificarYActualizar valida conflictos y holds excluyendo este mismo
+      // turno, y al ser un UPDATE no toca extras_ids: el turno conserva su id,
+      // su token y sus extras. Antes esto cancelaba y recreaba sin validar
+      // nada, con lo cual se podia pisar el turno de otra clienta.
+      turnoActualizado = await verificarYActualizar(turno.id, {
+        fecha: new Date(fecha),
+        hora_inicio: horaInicio,
+        hora_fin: horaFin,
+        servicio_id: turno.servicio_id,
+        profesional_id: turno.profesional_id
       });
- 
-      return tx.turno.create({
-        data: {
-          cliente_nombre: turno.cliente_nombre,
-          cliente_apellido: turno.cliente_apellido,
-          cliente_telefono: turno.cliente_telefono,
-          servicio_id: servicioId,
-          profesional_id: profesionalId,
-          ...plataPorServicioId[servicio.id],
-          fecha: new Date(fecha),
-          hora_inicio: horaInicio,
-          hora_fin: horaFin,
-          estado: 'confirmado',
-          token_acceso: turno.token_acceso,
-          token_expires_at: turno.token_expires_at
-        },
-        include: { servicio: true }
-      });
-    });
- 
+    } catch (err) {
+      if (err.message === 'HORARIO_NO_DISPONIBLE') {
+        return res.status(409).json({ error: 'Ese horario ya no está disponible. Elegí otro.' });
+      }
+      throw err;
+    }
+
     enviarModificacion(turnoActualizado).catch(err =>
       console.error('Error enviando WA de modificación:', err.message)
     );
     notificarModificacionADaniela(turno, turnoActualizado).catch(err =>
       console.error('Error notificando modificación a Daniela:', err.message)
     );
- 
+
     res.json({ success: true, turno: turnoActualizado });
   } catch (err) { next(err); }
 });
