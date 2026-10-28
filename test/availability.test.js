@@ -47,3 +47,19 @@ test('la condicion de solapamiento tambien sobrevive', () => {
   const combinado = Object.assign(whereHoldsActivos(FECHA, 2), { OR: OR_SOLAPAMIENTO });
   assert.deepEqual(combinado.OR, OR_SOLAPAMIENTO);
 });
+
+// Misma trampa, rama nueva: el filtro de camilla tambien vive adentro del AND,
+// asi que tiene que sobrevivir al mismo spread. Si se hubiera puesto en `OR`,
+// el checkout lo pisaria y un hold de camilla ajeno dejaria de congelar la cama.
+test('el filtro de camilla sobrevive al OR de solapamiento', () => {
+  const combinado = Object.assign(whereHoldsActivos(FECHA, 2, true), { OR: OR_SOLAPAMIENTO });
+  assert.equal(JSON.stringify(combinado).includes('usa_camilla'), true);
+  assert.equal(filtraPorProfesional(combinado), true);
+  assert.deepEqual(combinado.OR, OR_SOLAPAMIENTO);
+});
+
+test('sin camilla el where no menciona usa_camilla', () => {
+  // Un servicio de unas no tiene que mirar los holds de camilla de nadie.
+  const w = whereHoldsActivos(FECHA, 2);
+  assert.equal(JSON.stringify(w).includes('usa_camilla'), false);
+});

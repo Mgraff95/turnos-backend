@@ -551,9 +551,10 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
     // Todos los items son de la misma profesional: el frontend no deja
     // combinarlas y lib/reservas.js lo rechaza al reservar. Acá alcanza con
     // tomar la del primero para saber contra qué agenda medir.
-    // Si cualquiera de los servicios del bloque usa la camilla, el bloque
-    // entero se mide contra la camilla: se ocupa de punta a punta.
-    opciones.usaCamilla = items.some(it => it.servicio.usa_camilla === true);
+    // Los items enteros y no un booleano: la camilla se mide solo contra los
+    // TRAMOS del bloque que la usan. Un bloque de facial (camilla) más uñas
+    // necesita la cama en su primera mitad, no de punta a punta.
+    opciones.items = items;
 
     const horarios = await obtenerHorariosDisponiblesBloque(
       new Date(fecha),
