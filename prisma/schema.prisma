@@ -53,6 +53,14 @@ model Servicio {
   incluye_nota     Boolean  @default(false)
   nota             String?
 
+  // La camilla es un recurso compartido: hay una sola en el estudio. Dos
+  // servicios que la usan no pueden solaparse, ni siquiera siendo de
+  // profesionales distintas. Las uñas no la usan y siguen en paralelo.
+  //
+  // Arranca en false a proposito: la regla no bloquea nada hasta que Daniela
+  // tilde cuales son los servicios de camilla desde el panel.
+  usa_camilla      Boolean  @default(false)
+
   // Dueña del servicio. El @default(1) es TEMPORAL: hace el backfill a Daniela
   // de las 18 filas que ya existen. Se quita en el último paso de la migración,
   // para que un turno sin profesional explícita falle en vez de caer en Daniela
@@ -283,6 +291,10 @@ model ReservaPendiente {
   // como caso normal. Sin esto, un pago en curso de Daniela congelaría la
   // agenda de Elsa. Sin relación: es una tabla transitoria.
   profesional_id   Int?
+  // Copia del servicio al momento del hold: si lo que se esta pagando usa la
+  // camilla, el hold tiene que congelarla para todas las profesionales, no
+  // solo para la agenda de la suya.
+  usa_camilla      Boolean  @default(false)
   es_multi         Boolean  @default(false)
   monto            Decimal  @db.Decimal(10, 2)
   tipo_pago        String

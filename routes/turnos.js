@@ -496,6 +496,10 @@ router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
     const extrasValidos = await resolverExtras(extras, parseInt(servicio_id));
     const minutosExtra = extrasValidos.reduce((s, e) => s + (e.minutos_adicionales || 0), 0);
  
+    // La camilla es compartida: si este servicio la usa, los turnos de
+    // camilla de la otra profesional tambien le ocupan el horario.
+    opciones.usaCamilla = servicio.usa_camilla === true;
+
     const horarios = await obtenerHorariosDisponibles(
       new Date(fecha),
       servicio.duracion_minutos + minutosExtra,
@@ -547,6 +551,10 @@ router.post('/disponibilidad-multi', async (req, res, next) => {
     // Todos los items son de la misma profesional: el frontend no deja
     // combinarlas y lib/reservas.js lo rechaza al reservar. Acá alcanza con
     // tomar la del primero para saber contra qué agenda medir.
+    // Si cualquiera de los servicios del bloque usa la camilla, el bloque
+    // entero se mide contra la camilla: se ocupa de punta a punta.
+    opciones.usaCamilla = items.some(it => it.servicio.usa_camilla === true);
+
     const horarios = await obtenerHorariosDisponiblesBloque(
       new Date(fecha),
       duracionTotal,
@@ -633,6 +641,11 @@ router.patch('/:id', async (req, res, next) => {
         hora_fin: horaFin,
         servicio_id: turno.servicio_id,
         profesional_id: turno.profesional_id
+      }, {
+        // Quien reserva no cambia al mover el turno, pero el chequeo de
+        // cruces lo necesita: una clienta no puede quedar con dos turnos
+        // solapados, uno con cada profesional.
+        cliente: turno
       });
     } catch (err) {
       if (err.message === 'HORARIO_NO_DISPONIBLE') {

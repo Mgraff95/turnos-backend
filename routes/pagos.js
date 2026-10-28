@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { calcularMonto, obtenerConfigPago } = require('../lib/pagos');
 const { construirTurnosDeReserva } = require('../lib/reservas');
-const { verificarYReservar, verificarYReservarBloque, whereHoldsActivos } = require('../lib/availability');
+const { verificarYReservar, verificarYReservarBloque, whereHoldsActivos, chequearCruces } = require('../lib/availability');
 const { crearPreferencia, validarFirmaWebhook, estaConfigurado } = require('../services/mercadopago');
 const { procesarNotificacionPago } = require('../lib/pagos-proceso');
 const { demasiadoCerca, errorAntelacion } = require('../lib/fechas');
@@ -98,6 +98,10 @@ router.post('/checkout', async (req, res, next) => {
     // 3. Congelar el slot. La validación de disponibilidad y la creación del
     //    hold van en la misma transacción, para que dos clientas no puedan
     //    congelar el mismo horario a la vez.
+    // Un hold de un servicio de camilla congela la camilla para todas, no
+    // solo para la agenda de su profesional.
+    const usaCamilla = reserva.items.some(i => i.servicio.usa_camilla === true);
+
     holdCreado = await prisma.$transaction(async (tx) => {
       const fechaDate = new Date(fecha);
 
@@ -119,10 +123,25 @@ router.post('/checkout', async (req, res, next) => {
       });
       if (turnoEnConflicto) throw new Error('HORARIO_NO_DISPONIBLE');
 
+      // Los cruces con la otra agenda (camilla compartida y la propia
+      // clienta) se chequean ACA y no solo al crear el turno: dejarla pagar
+      // para rechazarla despues seria lo peor de los dos mundos. El webhook
+      // los vuelve a chequear igual cuando crea los turnos.
+      for (const datos of reserva.turnosData) {
+        await chequearCruces(tx, {
+          fecha: fechaDate,
+          horaInicio: datos.hora_inicio,
+          horaFin: datos.hora_fin,
+          profesionalId: reserva.profesionalId,
+          servicioId: datos.servicio_id,
+          cliente: datos
+        });
+      }
+
       // ¿Y otro hold activo?
       const holdEnConflicto = await tx.reservaPendiente.findFirst({
         where: {
-          ...whereHoldsActivos(fechaDate, reserva.profesionalId),
+          ...whereHoldsActivos(fechaDate, reserva.profesionalId, usaCamilla),
           OR: [
             { hora_inicio: { lte: reserva.rangoInicio }, hora_fin: { gt: reserva.rangoInicio } },
             { hora_inicio: { lt: reserva.rangoFin }, hora_fin: { gte: reserva.rangoFin } },
@@ -141,6 +160,7 @@ router.post('/checkout', async (req, res, next) => {
           cliente_telefono: reserva.turnosData[0].cliente_telefono,
           fecha: fechaDate,
           profesional_id: reserva.profesionalId,
+          usa_camilla: usaCamilla,
           hora_inicio: reserva.rangoInicio,
           hora_fin: reserva.rangoFin,
           payload: {
