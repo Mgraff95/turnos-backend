@@ -80,6 +80,12 @@ model HorarioConfig {
   hora_fin                 String   @default("18:00")
   espacio_entre_turnos_min Int      @default(10)
 
+  // null = es el horario semanal de siempre, el que vale todos los <dia_semana>.
+  // Con fecha = es una excepción para ese día puntual, y REEMPLAZA al semanal:
+  // sirve para alargar, para acortar, y para abrir un día normalmente cerrado.
+  // Para CERRAR sigue estando bloques_cerrados, que se aplica encima.
+  fecha                    DateTime? @db.Date
+
   // De quién es este rango. Cada profesional tiene su propia agenda y su propio
   // espacio entre turnos. @default(1) temporal, igual que en servicios.
   profesional_id           Int      @default(1)
@@ -90,6 +96,7 @@ model HorarioConfig {
   profesional Profesional @relation(fields: [profesional_id], references: [id])
 
   @@index([profesional_id, dia_semana])
+  @@index([fecha])
   @@map("horarios_config")
 }
 

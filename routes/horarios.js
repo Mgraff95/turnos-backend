@@ -6,20 +6,38 @@ const { authAdmin } = require('../middleware/auth');
 
 const soloProfesional = { select: { id: true, nombre: true } };
 
+// 0=lunes ... 6=domingo, el mismo criterio que usa lib/availability.
+// La fecha llega como 'YYYY-MM-DD' y se lee en UTC para que no se corra de día.
+function diaSemanaDe(fecha) {
+  const jsDay = new Date(`${String(fecha).split('T')[0]}T12:00:00Z`).getUTCDay();
+  return jsDay === 0 ? 6 : jsDay - 1;
+}
+
 // ── Público: listar configuración de horarios ──
 // Con ?profesional_id=N devuelve solo la agenda de esa profesional. Sin el
 // parámetro devuelve todas con la profesional incluida, así el panel puede
 // mostrar las dos agendas sin hacer dos pedidos.
 router.get('/', async (req, res, next) => {
   try {
-    const { profesional_id } = req.query;
+    const { profesional_id, tipo } = req.query;
     const where = {};
     if (profesional_id !== undefined) where.profesional_id = parseInt(profesional_id);
+
+    // tipo=semanal -> solo el horario de siempre
+    // tipo=excepcion -> solo los días puntuales, y solo de hoy en adelante:
+    //                   una excepción pasada ya no aplica y ensucia la lista.
+    if (tipo === 'semanal') {
+      where.fecha = null;
+    } else if (tipo === 'excepcion') {
+      const hoy = new Date();
+      hoy.setUTCHours(0, 0, 0, 0);
+      where.fecha = { gte: hoy };
+    }
 
     const horarios = await prisma.horarioConfig.findMany({
       where,
       include: { profesional: soloProfesional },
-      orderBy: [{ dia_semana: 'asc' }, { hora_inicio: 'asc' }]
+      orderBy: [{ fecha: 'asc' }, { dia_semana: 'asc' }, { hora_inicio: 'asc' }]
     });
     res.json(horarios);
   } catch (err) { next(err); }
@@ -28,10 +46,18 @@ router.get('/', async (req, res, next) => {
 // ── Admin: agregar rango horario a un día ──────
 router.post('/', authAdmin, async (req, res, next) => {
   try {
-    const { dia_semana, hora_inicio, hora_fin, espacio_entre_turnos_min, profesional_id } = req.body;
+    const { dia_semana, hora_inicio, hora_fin, espacio_entre_turnos_min, profesional_id, fecha } = req.body;
 
-    if (dia_semana === undefined || !hora_inicio || !hora_fin) {
-      return res.status(400).json({ error: 'Faltan campos: dia_semana, hora_inicio, hora_fin' });
+    if (!hora_inicio || !hora_fin) {
+      return res.status(400).json({ error: 'Faltan campos: hora_inicio, hora_fin' });
+    }
+    if (hora_fin <= hora_inicio) {
+      return res.status(400).json({ error: 'La hora de fin debe ser posterior a la de inicio' });
+    }
+    // Con fecha es una excepción para ese día puntual; sin fecha, el horario
+    // semanal de siempre y ahí el día de semana sí hace falta.
+    if (!fecha && dia_semana === undefined) {
+      return res.status(400).json({ error: 'Falta dia_semana (o una fecha, si es un horario especial)' });
     }
     // Obligatorio: un rango sin profesional no se sabe de qué agenda es, y
     // dejarlo caer en una por defecto haría que una profesional ofrezca
@@ -42,7 +68,10 @@ router.post('/', authAdmin, async (req, res, next) => {
 
     const horario = await prisma.horarioConfig.create({
       data: {
-        dia_semana: parseInt(dia_semana),
+        // En una excepción el día de semana se deriva de la fecha: la columna es
+        // obligatoria y así queda coherente con el día que representa.
+        dia_semana: fecha ? diaSemanaDe(fecha) : parseInt(dia_semana),
+        fecha: fecha ? new Date(fecha) : null,
         abierto: true,
         hora_inicio,
         hora_fin,
