@@ -5,11 +5,10 @@ const prisma = require('../lib/prisma');
 const {
   enviarAsistenciaConfirmada,
   enviarAsistenciaConfirmadaGrupo,
-  notificarCancelacionADaniela,
-  notificarCancelacionGrupoADaniela,
   notificarWaitlist,
   enviarMensaje
 } = require('../services/whatsapp');
+const { avisarCancelacion, avisarCancelacionGrupo } = require('../lib/avisos');
  
 // ── Determinar franja horaria ──────────────────
 function determinarFranja(horaInicio) {
@@ -125,7 +124,7 @@ router.post('/', express.json(), async (req, res) => {
           where: { grupo_reserva: turno.grupo_reserva, estado: 'confirmado' },
           data: { estado: 'cancelado' }
         });
-        await notificarCancelacionGrupoADaniela(grupo);
+        await avisarCancelacionGrupo(grupo);
         for (const t of grupo) {
           await procesarWaitlist(t);
         }
@@ -135,7 +134,7 @@ router.post('/', express.json(), async (req, res) => {
           where: { id: turno.id },
           data: { estado: 'cancelado' }
         });
-        await notificarCancelacionADaniela(turno);
+        await avisarCancelacion(turno);
         await procesarWaitlist(turno);
       }
       // Mensaje de cancelación con invitación a reagendar (mismo texto para turno simple o grupo)

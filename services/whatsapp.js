@@ -322,106 +322,6 @@ function textoModificacion(turnoAnterior, turnoNuevo, { tipo, profesionalNombre 
     lineaTelefonoClienta(tipo, turnoNuevo);
 }
 
-// ── Notificación a Daniela de cancelación ──────────────
-async function notificarCancelacionADaniela(turno) {
-  const fechaStr = formatearFecha(turno.fecha);
-  const telefonoDaniela = process.env.DANIELA_TELEFONO;
-  if (!telefonoDaniela) {
-    console.log('⚠️  DANIELA_TELEFONO no configurado');
-    return false;
-  }
-  const mensaje =
-    `⚠️ Cancelación de turno\n\n` +
-    `${turno.cliente_nombre} ${turno.cliente_apellido} canceló su turno:\n` +
-    `📅 ${fechaStr}\n` +
-    `⏰ ${turno.hora_inicio} hs\n` +
-    `💅 ${turno.servicio.nombre}\n` +
-    `📱 ${turno.cliente_telefono}\n\n` +
-    `El horario quedó libre.`;
-  return enviarWhatsApp(telefonoDaniela, mensaje);
-}
- 
-// ── Notificación a Daniela de cancelación de bloque ────
-async function notificarCancelacionGrupoADaniela(turnos) {
-  if (!turnos || turnos.length === 0) return false;
-  const telefonoDaniela = process.env.DANIELA_TELEFONO;
-  if (!telefonoDaniela) {
-    console.log('⚠️  DANIELA_TELEFONO no configurado');
-    return false;
-  }
-  const primero = turnos[0];
-  const ultimo = turnos[turnos.length - 1];
-  const fechaStr = formatearFecha(primero.fecha);
-  const lista = turnos.map(t => `   • ${t.servicio.nombre} (${t.hora_inicio} hs)`).join('\n');
-  const mensaje =
-    `⚠️ Cancelación de turnos\n\n` +
-    `${primero.cliente_nombre} ${primero.cliente_apellido} canceló su reserva:\n` +
-    `📅 ${fechaStr}\n` +
-    `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
-    `${lista}\n` +
-    `📱 ${primero.cliente_telefono}\n\n` +
-    `El bloque quedó libre.`;
-  return enviarWhatsApp(telefonoDaniela, mensaje);
-}
- 
-// ── Notificación a Daniela de turno NUEVO (simple) ─────
-async function notificarNuevoTurnoADaniela(turno) {
-  const fechaStr = formatearFecha(turno.fecha);
-  const telefonoDaniela = process.env.DANIELA_TELEFONO;
-  if (!telefonoDaniela) {
-    console.log('⚠️  DANIELA_TELEFONO no configurado');
-    return false;
-  }
-  const mensaje =
-    `🆕 Nuevo turno reservado\n\n` +
-    `${turno.cliente_nombre} ${turno.cliente_apellido} reservó:\n` +
-    `📅 ${fechaStr}\n` +
-    `⏰ ${turno.hora_inicio} hs\n` +
-    `💅 ${turno.servicio.nombre}\n` +
-    `📱 ${turno.cliente_telefono}`;
-  return enviarWhatsApp(telefonoDaniela, mensaje);
-}
- 
-// ── Notificación a Daniela de RESERVA MÚLTIPLE nueva ───
-async function notificarNuevoTurnoGrupoADaniela(turnos) {
-  if (!turnos || turnos.length === 0) return false;
-  const telefonoDaniela = process.env.DANIELA_TELEFONO;
-  if (!telefonoDaniela) {
-    console.log('⚠️  DANIELA_TELEFONO no configurado');
-    return false;
-  }
-  const primero = turnos[0];
-  const ultimo = turnos[turnos.length - 1];
-  const fechaStr = formatearFecha(primero.fecha);
-  const lista = turnos.map(t => `   • ${t.servicio.nombre} (${t.hora_inicio} hs)`).join('\n');
-  const mensaje =
-    `🆕 Nueva reserva múltiple\n\n` +
-    `${primero.cliente_nombre} ${primero.cliente_apellido} reservó:\n` +
-    `📅 ${fechaStr}\n` +
-    `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
-    `${lista}\n` +
-    `📱 ${primero.cliente_telefono}`;
-  return enviarWhatsApp(telefonoDaniela, mensaje);
-}
- 
-// ── Notificación a Daniela de MODIFICACIÓN (hecha por el cliente) ──
-async function notificarModificacionADaniela(turnoAnterior, turnoNuevo) {
-  const telefonoDaniela = process.env.DANIELA_TELEFONO;
-  if (!telefonoDaniela) {
-    console.log('⚠️  DANIELA_TELEFONO no configurado');
-    return false;
-  }
-  const fechaAntes = formatearFecha(turnoAnterior.fecha);
-  const fechaDespues = formatearFecha(turnoNuevo.fecha);
-  const mensaje =
-    `✏️ Turno modificado\n\n` +
-    `${turnoNuevo.cliente_nombre} ${turnoNuevo.cliente_apellido} cambió su turno:\n` +
-    `Antes: 📅 ${fechaAntes} ⏰ ${turnoAnterior.hora_inicio} hs\n` +
-    `Ahora: 📅 ${fechaDespues} ⏰ ${turnoNuevo.hora_inicio} hs · 💅 ${turnoNuevo.servicio.nombre}\n` +
-    `📱 ${turnoNuevo.cliente_telefono}`;
-  return enviarWhatsApp(telefonoDaniela, mensaje);
-}
- 
 // ── Resumen diario a Daniela (agenda de mañana) ────────
 // `gruposDelDia`: array de arrays de turnos (cada sub-array es un grupo_reserva,
 // o un turno suelto envuelto en un array de 1), ya ordenados cronológicamente.
@@ -524,11 +424,6 @@ module.exports = {
   enviarAsistenciaConfirmada,
   enviarCancelacion,
   enviarCancelacionGrupo,
-  notificarCancelacionADaniela,
-  notificarCancelacionGrupoADaniela,
-  notificarNuevoTurnoADaniela,
-  notificarNuevoTurnoGrupoADaniela,
-  notificarModificacionADaniela,
   enviarResumenDiarioADaniela,
   enviarModificacion,
   notificarWaitlist,
