@@ -213,6 +213,116 @@ async function enviarCancelacionGrupo(turnos) {
 }
  
 // ── Notificación a Daniela de cancelación ─────────────
+// ══ Textos de los avisos internos ══════════════════════
+//
+// Cada hecho del estudio se cuenta dos veces: al estudio (dice quién atiende y
+// lleva el teléfono de la clienta, para que Daniela pueda llamar) y a la
+// profesional del turno (en segunda persona y sin datos de contacto de la
+// clienta). Son funciones puras: no consultan la base ni mandan nada. Quién los
+// recibe lo decide lib/avisos.js.
+
+function esEstudio(tipo) {
+  return tipo === 'estudio';
+}
+
+// La línea de quién atiende solo tiene sentido para el estudio: a la
+// profesional no hace falta decirle que el turno es suyo.
+function lineaProfesional(tipo, profesionalNombre) {
+  return esEstudio(tipo) && profesionalNombre ? `👩 ${profesionalNombre}\n` : '';
+}
+
+function lineaTelefonoClienta(tipo, turno) {
+  return esEstudio(tipo) ? `📱 ${turno.cliente_telefono}` : '';
+}
+
+function lineaClienta(tipo, turno) {
+  return esEstudio(tipo) ? '' : `👤 ${turno.cliente_nombre} ${turno.cliente_apellido}\n`;
+}
+
+function textoNuevoTurno(turno, { tipo, profesionalNombre } = {}) {
+  const fechaStr = formatearFecha(turno.fecha);
+  const encabezado = esEstudio(tipo)
+    ? `🆕 Nuevo turno reservado\n\n${turno.cliente_nombre} ${turno.cliente_apellido} reservó:\n`
+    : `🆕 Te agendaron un turno\n\n`;
+
+  return encabezado +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n` +
+    lineaClienta(tipo, turno) +
+    lineaProfesional(tipo, profesionalNombre) +
+    lineaTelefonoClienta(tipo, turno);
+}
+
+function textoNuevoTurnoGrupo(turnos, { tipo, profesionalNombre } = {}) {
+  const primero = turnos[0];
+  const ultimo = turnos[turnos.length - 1];
+  const fechaStr = formatearFecha(primero.fecha);
+  const lista = turnos.map(t => `   • ${t.servicio.nombre} (${t.hora_inicio} hs)`).join('\n');
+  const encabezado = esEstudio(tipo)
+    ? `🆕 Nueva reserva múltiple\n\n${primero.cliente_nombre} ${primero.cliente_apellido} reservó:\n`
+    : `🆕 Te agendaron varios servicios\n\n`;
+
+  return encabezado +
+    `📅 ${fechaStr}\n` +
+    `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
+    `${lista}\n` +
+    lineaClienta(tipo, primero) +
+    lineaProfesional(tipo, profesionalNombre) +
+    lineaTelefonoClienta(tipo, primero);
+}
+
+function textoCancelacion(turno, { tipo, profesionalNombre } = {}) {
+  const fechaStr = formatearFecha(turno.fecha);
+  const encabezado = esEstudio(tipo)
+    ? `⚠️ Cancelación de turno\n\n${turno.cliente_nombre} ${turno.cliente_apellido} canceló su turno:\n`
+    : `⚠️ Se canceló un turno tuyo\n\n`;
+
+  return encabezado +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n` +
+    lineaClienta(tipo, turno) +
+    lineaProfesional(tipo, profesionalNombre) +
+    lineaTelefonoClienta(tipo, turno) +
+    `\n\nEl horario quedó libre.`;
+}
+
+function textoCancelacionGrupo(turnos, { tipo, profesionalNombre } = {}) {
+  const primero = turnos[0];
+  const ultimo = turnos[turnos.length - 1];
+  const fechaStr = formatearFecha(primero.fecha);
+  const lista = turnos.map(t => `   • ${t.servicio.nombre} (${t.hora_inicio} hs)`).join('\n');
+  const encabezado = esEstudio(tipo)
+    ? `⚠️ Cancelación de turnos\n\n${primero.cliente_nombre} ${primero.cliente_apellido} canceló su reserva:\n`
+    : `⚠️ Se cancelaron turnos tuyos\n\n`;
+
+  return encabezado +
+    `📅 ${fechaStr}\n` +
+    `🕐 De ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
+    `${lista}\n` +
+    lineaClienta(tipo, primero) +
+    lineaProfesional(tipo, profesionalNombre) +
+    lineaTelefonoClienta(tipo, primero) +
+    `\n\nEl bloque quedó libre.`;
+}
+
+function textoModificacion(turnoAnterior, turnoNuevo, { tipo, profesionalNombre } = {}) {
+  const fechaAntes = formatearFecha(turnoAnterior.fecha);
+  const fechaDespues = formatearFecha(turnoNuevo.fecha);
+  const encabezado = esEstudio(tipo)
+    ? `✏️ Turno modificado\n\n${turnoNuevo.cliente_nombre} ${turnoNuevo.cliente_apellido} cambió su turno:\n`
+    : `✏️ Te movieron un turno\n\n`;
+
+  return encabezado +
+    `Antes: 📅 ${fechaAntes} ⏰ ${turnoAnterior.hora_inicio} hs\n` +
+    `Ahora: 📅 ${fechaDespues} ⏰ ${turnoNuevo.hora_inicio} hs · 💅 ${turnoNuevo.servicio.nombre}\n` +
+    lineaClienta(tipo, turnoNuevo) +
+    lineaProfesional(tipo, profesionalNombre) +
+    lineaTelefonoClienta(tipo, turnoNuevo);
+}
+
+// ── Notificación a Daniela de cancelación ──────────────
 async function notificarCancelacionADaniela(turno) {
   const fechaStr = formatearFecha(turno.fecha);
   const telefonoDaniela = process.env.DANIELA_TELEFONO;
@@ -403,6 +513,11 @@ async function enviarMensaje(telefono, texto) {
 }
  
 module.exports = {
+  textoNuevoTurno,
+  textoNuevoTurnoGrupo,
+  textoCancelacion,
+  textoCancelacionGrupo,
+  textoModificacion,
   enviarConfirmacion,
   enviarConfirmacionGrupo,
   enviarRecordatorio,
