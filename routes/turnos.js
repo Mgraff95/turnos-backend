@@ -23,14 +23,16 @@ const {
   enviarCancelacionGrupo,
   enviarModificacion,
   enviarAsistenciaConfirmada,
-  notificarCancelacionADaniela,
-  notificarCancelacionGrupoADaniela,
-  notificarNuevoTurnoADaniela,
-  notificarNuevoTurnoGrupoADaniela,
-  notificarModificacionADaniela,
   notificarWaitlist,
   notificarTurnoTomadoWaitlist
 } = require('../services/whatsapp');
+const {
+  avisarCancelacion,
+  avisarCancelacionGrupo,
+  avisarNuevoTurno,
+  avisarNuevoTurnoGrupo,
+  avisarModificacion
+} = require('../lib/avisos');
  
 // ── Determinar franja horaria ──────────────────
 function determinarFranja(horaInicio) {
@@ -126,8 +128,8 @@ router.post('/', async (req, res, next) => {
     enviarConfirmacion(turno).catch(err =>
       console.error('Error enviando WA de confirmación:', err.message)
     );
-    notificarNuevoTurnoADaniela(turno).catch(err =>
-      console.error('Error notificando nuevo turno a Daniela:', err.message)
+    avisarNuevoTurno(turno).catch(err =>
+      console.error('Error avisando el turno nuevo:', err.message)
     );
  
     // Verificar si este turno cubre un slot del waitlist → notificar a Daniela
@@ -276,8 +278,8 @@ router.post('/multi', async (req, res, next) => {
     enviarConfirmacionGrupo(turnosCreados).catch(err =>
       console.error('Error enviando WA de confirmación de grupo:', err.message)
     );
-    notificarNuevoTurnoGrupoADaniela(turnosCreados).catch(err =>
-      console.error('Error notificando nuevo grupo a Daniela:', err.message)
+    avisarNuevoTurnoGrupo(turnosCreados).catch(err =>
+      console.error('Error avisando la reserva nueva:', err.message)
     );
  
     // Waitlist: notificar por cada franja única cubierta por el bloque
@@ -390,8 +392,8 @@ router.get('/cancelar', async (req, res, next) => {
       enviarCancelacionGrupo(grupo).catch(err =>
         console.error('Error enviando WA cancelación de grupo:', err.message)
       );
-      notificarCancelacionGrupoADaniela(grupo).catch(err =>
-        console.error('Error notificando cancelación de grupo a Daniela:', err.message)
+      avisarCancelacionGrupo(grupo).catch(err =>
+        console.error('Error avisando la cancelación del bloque:', err.message)
       );
  
       // Notificar waitlist por cada franja liberada
@@ -441,8 +443,8 @@ router.get('/cancelar', async (req, res, next) => {
     enviarCancelacion(turno).catch(err =>
       console.error('Error enviando WA cancelación:', err.message)
     );
-    notificarCancelacionADaniela(turno).catch(err =>
-      console.error('Error notificando cancelación a Daniela:', err.message)
+    avisarCancelacion(turno).catch(err =>
+      console.error('Error avisando la cancelación:', err.message)
     );
  
     // Notificar waitlist
@@ -658,8 +660,8 @@ router.patch('/:id', async (req, res, next) => {
     enviarModificacion(turnoActualizado).catch(err =>
       console.error('Error enviando WA de modificación:', err.message)
     );
-    notificarModificacionADaniela(turno, turnoActualizado).catch(err =>
-      console.error('Error notificando modificación a Daniela:', err.message)
+    avisarModificacion(turno, turnoActualizado).catch(err =>
+      console.error('Error avisando la modificación:', err.message)
     );
 
     res.json({ success: true, turno: turnoActualizado });
@@ -709,8 +711,8 @@ router.delete('/:id', async (req, res, next) => {
       enviarCancelacionGrupo(grupo).catch(err =>
         console.error('Error enviando WA de cancelación de grupo:', err.message)
       );
-      notificarCancelacionGrupoADaniela(grupo).catch(err =>
-        console.error('Error notificando cancelación de grupo a Daniela:', err.message)
+      avisarCancelacionGrupo(grupo).catch(err =>
+        console.error('Error avisando la cancelación del bloque:', err.message)
       );
  
       return res.json({ success: true });
@@ -733,8 +735,8 @@ router.delete('/:id', async (req, res, next) => {
     enviarCancelacion(turno).catch(err =>
       console.error('Error enviando WA de cancelación:', err.message)
     );
-    notificarCancelacionADaniela(turno).catch(err =>
-      console.error('Error notificando cancelación a Daniela:', err.message)
+    avisarCancelacion(turno).catch(err =>
+      console.error('Error avisando la cancelación:', err.message)
     );
  
     res.json({ success: true });
