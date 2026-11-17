@@ -322,47 +322,55 @@ function textoModificacion(turnoAnterior, turnoNuevo, { tipo, profesionalNombre 
     lineaTelefonoClienta(tipo, turnoNuevo);
 }
 
-// ── Resumen diario a Daniela (agenda de mañana) ────────
-// `gruposDelDia`: array de arrays de turnos (cada sub-array es un grupo_reserva,
-// o un turno suelto envuelto en un array de 1), ya ordenados cronológicamente.
-async function enviarResumenDiarioADaniela(fecha, gruposDelDia) {
-  const telefonoDaniela = process.env.DANIELA_TELEFONO;
-  if (!telefonoDaniela) {
-    console.log('⚠️  DANIELA_TELEFONO no configurado');
-    return false;
-  }
-  const fechaStr = formatearFecha(fecha);
- 
-  if (!gruposDelDia || gruposDelDia.length === 0) {
-    const mensaje =
-      `📋 Agenda de mañana (${fechaStr})\n\n` +
-      `No tenés turnos agendados. Aprovechá para descansar 😌`;
-    return enviarWhatsApp(telefonoDaniela, mensaje);
-  }
- 
-  let cuerpo = '';
-  for (const grupo of gruposDelDia) {
-    const primero = grupo[0];
-    const ultimo = grupo[grupo.length - 1];
-    const servicios = grupo.map(t => t.servicio.nombre).join(' + ');
-    cuerpo += `\n⏰ ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
-              `   👤 ${primero.cliente_nombre} ${primero.cliente_apellido}\n` +
-              `   💅 ${servicios}\n`;
-  }
- 
-  const primerTurno = gruposDelDia[0][0];
-  const ultimoGrupo = gruposDelDia[gruposDelDia.length - 1];
-  const ultimoTurno = ultimoGrupo[ultimoGrupo.length - 1];
- 
-  const mensaje =
-    `📋 Agenda de mañana (${fechaStr})\n` +
-    `${cuerpo}\n` +
-    `🌅 Primer turno: ${primerTurno.hora_inicio} hs\n` +
-    `🌙 Terminás: ${ultimoTurno.hora_fin} hs`;
- 
-  return enviarWhatsApp(telefonoDaniela, mensaje);
+// ── Las agendas de mañana ──────────────────────────────
+//
+// Un bloque de la agenda: el rango, la clienta y los servicios que se le hacen
+// en ese rango (una reserva múltiple es un bloque con varios servicios).
+function bloqueDeAgenda(grupo) {
+  const primero = grupo[0];
+  const ultimo = grupo[grupo.length - 1];
+  const servicios = grupo.map(t => t.servicio.nombre).join(' + ');
+  return `⏰ ${primero.hora_inicio} a ${ultimo.hora_fin} hs\n` +
+         `   👤 ${primero.cliente_nombre} ${primero.cliente_apellido}\n` +
+         `   💅 ${servicios}\n`;
 }
- 
+
+// La del estudio, para Daniela: el horario de punta a punta y después quién
+// atiende qué. Es la única que ve el día completo.
+function textoAgendaEstudio(fecha, { horario, porProfesional } = {}) {
+  const fechaStr = formatearFecha(fecha);
+
+  if (!porProfesional || porProfesional.length === 0) {
+    return `📋 Agenda de mañana (${fechaStr})\n\n` +
+           `No tenés turnos agendados. Aprovechá para descansar 😌`;
+  }
+
+  let cuerpo = '';
+  for (const { profesional, grupos } of porProfesional) {
+    cuerpo += `\n👩 ${profesional.nombre}\n`;
+    cuerpo += grupos.map(bloqueDeAgenda).join('\n');
+  }
+
+  const encabezado = `📋 Agenda de mañana (${fechaStr})\n` +
+    (horario ? `🏠 Estudio abierto de ${horario.inicio} a ${horario.fin}\n` : '');
+
+  return encabezado + cuerpo;
+}
+
+// La de cada profesional: solo sus bloques. Sin teléfonos de clientas y sin
+// decirle de quién es cada turno, porque son todos suyos.
+function textoAgendaProfesional(fecha, grupos) {
+  const fechaStr = formatearFecha(fecha);
+  const turnos = grupos.flat();
+  const primero = turnos[0];
+  const ultimoFin = turnos.reduce((max, t) => (t.hora_fin > max ? t.hora_fin : max), turnos[0].hora_fin);
+
+  return `📋 Tu agenda de mañana (${fechaStr})\n\n` +
+    grupos.map(bloqueDeAgenda).join('\n') +
+    `\n🌅 Primer turno: ${primero.hora_inicio} hs\n` +
+    `🌙 Terminás: ${ultimoFin} hs`;
+}
+
 // ── Modificación ───────────────────────────────────────
 async function enviarModificacion(turno) {
   const fechaStr = formatearFecha(turno.fecha);
@@ -424,7 +432,8 @@ module.exports = {
   enviarAsistenciaConfirmada,
   enviarCancelacion,
   enviarCancelacionGrupo,
-  enviarResumenDiarioADaniela,
+  textoAgendaEstudio,
+  textoAgendaProfesional,
   enviarModificacion,
   notificarWaitlist,
   notificarTurnoTomadoWaitlist,
