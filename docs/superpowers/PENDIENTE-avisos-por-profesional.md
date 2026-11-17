@@ -12,8 +12,13 @@ pueda quedar a medias en la base.
 
 ## 1. Cargar el teléfono de cada profesional
 
-En el panel → **Equipo** → Editar, el campo **Teléfono** (sin el 549, igual que
-los de las clientas: `1123456789`).
+En el panel → **Equipo** → Editar, el campo **Teléfono** (igual que los de las
+clientas: `1123456789`).
+
+Espacios y guiones no molestan: se ignoran tanto para comparar como para
+mandar. Lo que **sí** rompe es el `0` de area y el `15`: el sistema le agrega
+`+549` adelante, así que `011 15 1234-5678` sale como un número inexistente y
+el mensaje no llega. Va el código de área sin `0` y el número sin `15`.
 
 **Es lo único que habilita todo lo nuevo para ella.** Sin teléfono cargado, la
 profesional no recibe nada: ni los avisos de sus turnos ni su agenda de mañana.
@@ -32,6 +37,12 @@ Que sea **el mismo número** que el teléfono de Daniela en la pestaña Equipo, 
 la deduplicación no la reconoce y recibe cada cosa dos veces: una como estudio y
 otra como profesional. Da igual cómo esté escrito (espacios y guiones se
 ignoran), pero tienen que ser los mismos dígitos.
+
+> **No le pongas `TZ` al servicio en Railway.** Railway corre en UTC y la fecha
+> del resumen diario se arma con los getters locales del proceso: si alguien
+> setea `TZ=America/Argentina/Buenos_Aires`, la "Agenda de mañana" va a decir el
+> día anterior. Es de antes de este cambio y no lo empeora, pero es la clase de
+> variable que se agrega sin pensar.
 
 ## 3. Deploy
 

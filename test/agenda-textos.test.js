@@ -40,3 +40,17 @@ test('la de la profesional trae solo lo suyo y sin telefonos', () => {
   assert.doesNotMatch(t, /1155556666/);
   assert.doesNotMatch(t, /👩/);
 });
+
+// Hallazgo del review de rama: con un turno cuya fila de profesionales ya no
+// existe, la sección salía titulada literalmente "👩 null" en el mensaje que
+// Daniela lee todas las noches. El camino de los avisos sí tenía el guard
+// (lineaProfesional omite la línea sin nombre); este no.
+test('una profesional sin nombre no imprime null', () => {
+  const t = textoAgendaEstudio(fecha, {
+    horario: { inicio: '10:00', fin: '11:00' },
+    porProfesional: [{ profesional: { nombre: null }, grupos: [bloque('10:00', '11:00', 'Ana')] }]
+  });
+  assert.doesNotMatch(t, /null/);
+  assert.match(t, /Sin asignar/);
+  assert.match(t, /Ana Gómez/);
+});

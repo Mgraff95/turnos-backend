@@ -56,3 +56,15 @@ test('normalizarTelefono deja solo digitos', () => {
   assert.equal(normalizarTelefono(''), null);
   assert.equal(normalizarTelefono(null), null);
 });
+
+// Hallazgo del review de rama: normalizarTelefono se usaba SOLO para comparar.
+// El teléfono salía crudo al transporte, que arma `+549<telefono>`: un número
+// cargado en el panel como '11 9876-5432' produce '+54911 9876-5432', Wassenger
+// lo rechaza y la profesional no recibe nunca nada, en silencio.
+test('el telefono que viaja al transporte son los digitos, no lo que se escribio', () => {
+  const d = destinatarios({
+    telefonoEstudio: '11 2345-6789',
+    profesional: { nombre: 'Noemí', telefono: '11 9876-5432' }
+  });
+  assert.deepEqual(d.map(x => x.telefono), ['1123456789', '1198765432']);
+});

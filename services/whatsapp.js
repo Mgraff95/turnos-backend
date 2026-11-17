@@ -212,7 +212,6 @@ async function enviarCancelacionGrupo(turnos) {
   return enviarWhatsApp(primero.cliente_telefono, mensaje);
 }
  
-// ── Notificación a Daniela de cancelación ─────────────
 // ══ Textos de los avisos internos ══════════════════════
 //
 // Cada hecho del estudio se cuenta dos veces: al estudio (dice quién atiende y
@@ -347,7 +346,10 @@ function textoAgendaEstudio(fecha, { horario, porProfesional } = {}) {
 
   let cuerpo = '';
   for (const { profesional, grupos } of porProfesional) {
-    cuerpo += `\n👩 ${profesional.nombre}\n`;
+    // Un turno cuya fila de profesionales ya no existe llega sin nombre. La
+    // sección tiene que salir igual —sus turnos existen y Daniela los
+    // necesita—, pero titulada "Sin asignar" y no "null".
+    cuerpo += `\n👩 ${profesional.nombre || 'Sin asignar'}\n`;
     cuerpo += grupos.map(bloqueDeAgenda).join('\n');
   }
 

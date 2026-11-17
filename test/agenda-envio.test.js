@@ -58,3 +58,12 @@ test('la profesional sin telefono cargado no frena la del estudio', async () => 
   await enviarAgendasDeManana(new Date('2026-11-18'), { deps: deps([t('15:00', '16:30', sinTel)], enviados) });
   assert.deepEqual(enviados.map(e => e.telefono), [ESTUDIO]);
 });
+
+// Mismo hallazgo, en el camino de las agendas.
+test('la agenda sale a los digitos del telefono, no al formato cargado', async () => {
+  const enviados = [];
+  process.env.DANIELA_TELEFONO = ESTUDIO;
+  const conGuiones = { ...noemi, telefono: '11 9876-5432' };
+  await enviarAgendasDeManana(new Date('2026-11-18'), { deps: deps([t('15:00', '16:30', conGuiones)], enviados) });
+  assert.deepEqual(enviados.map(e => e.telefono), [ESTUDIO, '1198765432']);
+});

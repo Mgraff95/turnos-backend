@@ -70,3 +70,36 @@ test('si cambia la profesional, una se entera de la baja y la otra del alta', as
   assert.match(porTelefono['1198765432'], /cancel/i);
   assert.match(porTelefono['1177778888'], /agendaron|nuevo/i);
 });
+
+// Hallazgo del review de rama: el spec, el plan y el PENDIENTE dicen que una
+// profesional sin teléfono "queda anotada en el log". No quedaba: se caía del
+// fan-out en silencio, y el único modo de enterarse era que ella se queje. El
+// camino de las agendas sí lo loguea; este no.
+test('una profesional sin telefono queda anotada en el log', async () => {
+  const lineas = [];
+  const logOriginal = console.log;
+  console.log = (...args) => lineas.push(args.join(' '));
+  try {
+    process.env.DANIELA_TELEFONO = ESTUDIO;
+    await avisarNuevoTurno(turno, { deps: deps({ profesional: { nombre: 'Noemí', telefono: null } }) });
+  } finally {
+    console.log = logOriginal;
+  }
+  assert.ok(
+    lineas.some(l => l.includes('Noemí') && l.includes('teléfono')),
+    `no se logueó el descarte. Líneas: ${JSON.stringify(lineas)}`
+  );
+});
+
+test('un turno de Daniela no se loguea como descarte', async () => {
+  const lineas = [];
+  const logOriginal = console.log;
+  console.log = (...args) => lineas.push(args.join(' '));
+  try {
+    process.env.DANIELA_TELEFONO = ESTUDIO;
+    await avisarNuevoTurno(turno, { deps: deps({ profesional: { nombre: 'Daniela', telefono: ESTUDIO } }) });
+  } finally {
+    console.log = logOriginal;
+  }
+  assert.deepEqual(lineas.filter(l => l.includes('teléfono')), []);
+});
