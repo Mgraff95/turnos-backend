@@ -17,6 +17,16 @@ const {
   minutosAHora
 } = require('../lib/availability');
 const { enviarConfirmacion, enviarConfirmacionGrupo } = require('../services/whatsapp');
+// Los avisos del panel van SOLO a la profesional del turno: el movimiento lo
+// hizo Daniela, avisarle de lo que acaba de hacer no le sirve de nada. Si el
+// turno es suyo, no sale ningún mensaje.
+const {
+  avisarNuevoTurno,
+  avisarNuevoTurnoGrupo,
+  avisarCancelacion,
+  avisarModificacion
+} = require('../lib/avisos');
+const SOLO_LA_PROFESIONAL = { incluirEstudio: false };
  
 // Adjunta a cada turno el detalle de sus extras (nombre, precio, minutos),
 // resolviendo los extras_ids con una sola consulta para toda la lista.
@@ -161,7 +171,14 @@ router.post('/turnos', authAdmin, async (req, res, next) => {
         console.error('Error enviando WA:', err.message)
       );
     }
- 
+
+    // Fuera del if a propósito: el check del panel dice "avisar por WhatsApp a
+    // la clienta". Si Daniela lo destilda porque la clienta ya está avisada, la
+    // profesional tiene que enterarse igual de que le agendaron un turno.
+    avisarNuevoTurno(turno, SOLO_LA_PROFESIONAL).catch(err =>
+      console.error('Error avisando el turno nuevo a la profesional:', err.message)
+    );
+
     res.status(201).json({ success: true, turno, notificado: debeNotificar });
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
@@ -296,7 +313,11 @@ router.post('/turnos/multi', authAdmin, async (req, res, next) => {
         console.error('Error enviando WA de grupo (admin):', err.message)
       );
     }
- 
+
+    avisarNuevoTurnoGrupo(turnosCreados, SOLO_LA_PROFESIONAL).catch(err =>
+      console.error('Error avisando la reserva nueva a la profesional:', err.message)
+    );
+
     res.status(201).json({
       success: true,
       grupo_reserva: grupoReserva,
@@ -319,7 +340,13 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
     const turnoId = parseInt(req.params.id);
     const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio } = req.body;
  
-    const turnoActual = await prisma.turno.findUnique({ where: { id: turnoId } });
+    // El servicio viene incluido porque si el cambio le mueve el turno de
+    // profesional, el aviso de cancelación a la que lo pierde nombra el
+    // servicio que tenía antes.
+    const turnoActual = await prisma.turno.findUnique({
+      where: { id: turnoId },
+      include: { servicio: true }
+    });
     if (!turnoActual) return res.status(404).json({ error: 'Turno no encontrado' });
     if (turnoActual.estado !== 'confirmado') {
       return res.status(400).json({ error: 'Solo se pueden editar turnos confirmados' });
@@ -395,8 +422,14 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
       enviarMensaje(turno.cliente_telefono, mensaje).catch(err =>
         console.error('Error enviando WA de modificación (admin):', err.message)
       );
+
+      // Si el cambio de servicio le cambió la profesional, avisarModificacion
+      // lo resuelve como una baja y un alta.
+      avisarModificacion(turnoActual, turno, SOLO_LA_PROFESIONAL).catch(err =>
+        console.error('Error avisando la modificación a la profesional:', err.message)
+      );
     }
- 
+
     res.json({ success: true, turno });
   } catch (err) {
     if (err.message === 'HORARIO_NO_DISPONIBLE') {
@@ -489,7 +522,11 @@ router.delete('/turnos/:id', authAdmin, async (req, res, next) => {
       `${process.env.FRONTEND_URL}\n\n` +
       `¡Disculpá los inconvenientes! 💅`
     );
- 
+
+    avisarCancelacion(turno, SOLO_LA_PROFESIONAL).catch(err =>
+      console.error('Error avisando la cancelación a la profesional:', err.message)
+    );
+
     res.json({ success: true });
   } catch (err) { next(err); }
 });
