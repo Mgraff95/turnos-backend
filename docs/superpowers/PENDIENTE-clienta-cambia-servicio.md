@@ -16,10 +16,15 @@ todavía no existen en producción: el endpoint de previsualización y el parám
 1. Mergear y pushear el **backend**. Railway lo despliega solo (está conectado a GitHub).
 2. Cuando ese deploy figure **Deployment successful** en Railway, mergear y pushear el **frontend**; Vercel lo publica solo.
 
-Si se hace al revés, a la clienta que entre a cambiar su turno no le va a
-aparecer la cuenta de lo que le queda, y la lista de horarios le va a esconder
-su propia hora. No se rompe nada ni se pierde nada: se arregla solo en cuanto
-salga el backend.
+Si se hace al revés —frontend publicado y backend todavía no—, a la clienta que
+entre a cambiar su turno le va a pasar esto: no ve la cuenta de lo que le queda,
+la lista le esconde su propia hora, y **si igual confirma un cambio de servicio,
+el backend viejo lo ignora y la pantalla le dice "Listo, cambiamos tu turno"
+sobre algo que no cambió**. No se pierde ningún dato, pero se le afirma algo
+falso, así que la ventana importa.
+
+Desde el arreglo del review, la pantalla no la deja confirmar mientras no tenga
+la cuenta, así que ese caso quedó tapado también del lado del frontend.
 
 ---
 

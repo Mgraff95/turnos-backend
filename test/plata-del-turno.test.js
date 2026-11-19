@@ -55,3 +55,44 @@ test('un turno viejo sin precio congelado si se calcula completo', () => {
   assert.equal(r.precio_base, 75000);
   assert.equal(r.comision_monto, 37500);
 });
+
+// ── Hallazgo del review de rama (Important) ────
+//
+// Lo que decide si se recongela la plata vivía suelto en el cuerpo de la ruta,
+// protegido solo por haberlo leído. Es justo el lugar donde una edición futura
+// recongela el precio de un turno sin querer, que es el anti-objetivo #1 del
+// diseño: una liquidación ya compartida que cambia sola.
+const { camposDelCambioDeServicio } = require('../lib/reservas');
+
+const turnoDePrp = { servicio_id: 7, profesional_id: 2, precio_base: 60000 };
+const esmaltadoDeDaniela = { id: 3, profesional_id: 1, precio_pesos: 20000, comision_pct: null };
+const daniela = { id: 1, comision_pct_default: null };
+
+test('sin servicio nuevo, el update no toca la plata ni los extras', () => {
+  const r = camposDelCambioDeServicio(turnoDePrp, null, null, []);
+  assert.deepEqual(r, { servicio_id: 7, profesional_id: 2 });
+  assert.equal('precio_base' in r, false);
+  assert.equal('extras_ids' in r, false);
+});
+
+test('con el MISMO servicio, se comporta como si no hubiera cambio', () => {
+  const mismo = { id: 7, profesional_id: 2, precio_pesos: 99999, comision_pct: null };
+  const r = camposDelCambioDeServicio(turnoDePrp, mismo, noemi, []);
+  assert.deepEqual(r, { servicio_id: 7, profesional_id: 2 });
+});
+
+test('con un servicio nuevo, se recongela todo y el turno cambia de agenda', () => {
+  const r = camposDelCambioDeServicio(turnoDePrp, esmaltadoDeDaniela, daniela, []);
+  assert.equal(r.servicio_id, 3);
+  assert.equal(r.profesional_id, 1);
+  assert.equal(r.precio_base, 20000);
+  assert.deepEqual(r.extras_ids, []);
+  assert.equal(r.comision_pct, null);
+});
+
+test('los extras que sobreviven entran en el precio y en la lista guardada', () => {
+  const extras = [{ id: 5, precio_pesos: 3000, precio_variable: false }];
+  const r = camposDelCambioDeServicio(turnoDePrp, esmaltadoDeDaniela, daniela, extras);
+  assert.equal(r.precio_base, 23000);
+  assert.deepEqual(r.extras_ids, [5]);
+});
