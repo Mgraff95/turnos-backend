@@ -3,9 +3,15 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
-const { validarTelefono, resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
+const {
+  validarTelefono,
+  resolverExtras,
+  resolverProfesionalYPlata,
+  plataDelTurno,
+  cargarProfesionalActiva
+} = require('../lib/reservas');
 const { demasiadoCerca, errorAntelacion, puedeModificarse, MENSAJES_MODIFICACION } = require('../lib/fechas');
-const { duracionConExtras } = require('../lib/edicion');
+const { duracionConExtras, puedeCambiarServicio, MENSAJES_EDICION } = require('../lib/edicion');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -598,7 +604,7 @@ router.get('/mistura/:telefono/:apellido', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { token, nueva_fecha, nueva_hora_inicio } = req.body;
+    const { token, nueva_fecha, nueva_hora_inicio, nuevo_servicio_id } = req.body;
 
     const turno = await prisma.turno.findUnique({
       where: { id: parseInt(id) },
@@ -628,19 +634,60 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(400).json({ error: MENSAJES_MODIFICACION[permiso.motivo] });
     }
 
-    // Solo se mueve fecha y hora: el servicio no cambia, asi que los extras, el
-    // precio congelado, la comision y la profesional quedan exactamente como
-    // estaban. No hay nada que recalcular ni que perder.
+    const cambiaServicio = nuevo_servicio_id !== undefined
+      && nuevo_servicio_id !== null
+      && parseInt(nuevo_servicio_id) !== turno.servicio_id;
+
+    // Lo que se guarda, segun si cambio el servicio o solo el horario.
     //
-    // La duracion SI hay que rearmarla, con los minutos de los extras incluidos.
-    // Sin eso, mover un turno que tiene extras lo guardaba mas corto de lo que
-    // dura y esos minutos quedaban ofrecibles a otra clienta. Los extras se leen
-    // tal como estan guardados, sin filtrar por `activo`: uno dado de baja
-    // despues de la reserva sigue ocupando el tiempo que ocupa.
-    const extrasDelTurno = turno.extras_ids?.length
-      ? await prisma.extra.findMany({ where: { id: { in: turno.extras_ids } } })
-      : [];
-    const horaFin = calcularHoraFin(horaInicio, duracionConExtras(turno.servicio, extrasDelTurno));
+    // Si NO cambio: el servicio, los extras, el precio congelado, la comision y
+    // la profesional quedan exactamente como estaban. Los extras se leen tal
+    // como estan guardados, sin filtrar por `activo`: uno dado de baja despues
+    // de la reserva sigue ocupando el tiempo que ocupa, y filtrarlo le acortaria
+    // el turno liberando tiempo en el que hay una clienta sentada.
+    //
+    // Si cambio: el servicio nuevo trae su propia duracion, su propia dueña y su
+    // propio precio. Los extras se filtran contra el (los que no ofrece dejan de
+    // contar y salen de la lista guardada) y la plata se recalcula ENTERA: al
+    // contrario de una reasignacion, aca cambio QUE se le hace a la clienta, asi
+    // que el precio de la foto cambia con razon.
+    let servicioEfectivo = turno.servicio;
+    let profesionalId = turno.profesional_id;
+    let extrasEfectivos;
+    let plata = {};
+    let extrasIds = {};
+
+    if (!cambiaServicio) {
+      extrasEfectivos = turno.extras_ids?.length
+        ? await prisma.extra.findMany({ where: { id: { in: turno.extras_ids } } })
+        : [];
+    } else {
+      const permisoServicio = puedeCambiarServicio(turno);
+      if (!permisoServicio.ok) {
+        return res.status(400).json({ error: MENSAJES_EDICION[permisoServicio.motivo] });
+      }
+
+      const servicioNuevo = await prisma.servicio.findUnique({ where: { id: parseInt(nuevo_servicio_id) } });
+      if (!servicioNuevo || !servicioNuevo.activo) {
+        return res.status(404).json({ error: 'Ese servicio no está disponible' });
+      }
+
+      let profesionalNueva;
+      try {
+        profesionalNueva = await cargarProfesionalActiva(servicioNuevo.profesional_id);
+      } catch (err) {
+        if (err.status) return res.status(err.status).json({ error: err.publico || 'Ese servicio no está disponible' });
+        throw err;
+      }
+
+      servicioEfectivo = servicioNuevo;
+      profesionalId = profesionalNueva.id;
+      extrasEfectivos = await resolverExtras(turno.extras_ids, servicioNuevo.id);
+      plata = plataDelTurno(servicioNuevo, profesionalNueva, extrasEfectivos);
+      extrasIds = { extras_ids: extrasEfectivos.map(e => e.id) };
+    }
+
+    const horaFin = calcularHoraFin(horaInicio, duracionConExtras(servicioEfectivo, extrasEfectivos));
 
     let turnoActualizado;
     try {
@@ -652,8 +699,10 @@ router.patch('/:id', async (req, res, next) => {
         fecha: new Date(fecha),
         hora_inicio: horaInicio,
         hora_fin: horaFin,
-        servicio_id: turno.servicio_id,
-        profesional_id: turno.profesional_id
+        servicio_id: servicioEfectivo.id,
+        profesional_id: profesionalId,
+        ...plata,
+        ...extrasIds
       }, {
         // Quien reserva no cambia al mover el turno, pero el chequeo de
         // cruces lo necesita: una clienta no puede quedar con dos turnos
