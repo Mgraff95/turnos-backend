@@ -487,9 +487,28 @@ router.get('/cancelar', async (req, res, next) => {
 router.get('/disponibilidad/:fecha/:servicio_id', async (req, res, next) => {
   try {
     const { fecha, servicio_id } = req.params;
-    const { extras, sin_minimo } = req.query;
+    const { extras, sin_minimo, excluir_turno_id, token } = req.query;
     const opciones = { respetarAntelacion: sin_minimo !== '1' };
- 
+
+    // Al editar su turno, ese turno no puede taparle su propio horario. Sin
+    // esto, cambiar de servicio dejando el mismo día y la misma hora —el caso
+    // más común— es imposible: su hora no aparece en la lista porque está
+    // ocupada por ella misma.
+    //
+    // Se exige el token del turno. Este endpoint es público: sin el token,
+    // cualquiera podría pedir el listado excluyendo un turno ajeno y ver como
+    // libre un horario que está ocupado. Si el token no corresponde, la
+    // exclusión se ignora y el listado sigue siendo el público y correcto.
+    if (excluir_turno_id && token) {
+      const suyo = await prisma.turno.findUnique({
+        where: { id: parseInt(excluir_turno_id) },
+        select: { id: true, token_acceso: true }
+      });
+      if (suyo && suyo.token_acceso === token) {
+        opciones.excluirTurnoIds = [suyo.id];
+      }
+    }
+
     const servicio = await prisma.servicio.findUnique({
       where: { id: parseInt(servicio_id) },
       include: { profesional: { select: { activo: true } } }
