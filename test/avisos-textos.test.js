@@ -58,3 +58,27 @@ test('el grupo lista los servicios y el rango completo', () => {
   assert.match(t, /17:30/);
   assert.doesNotMatch(t, /1123456789/);
 });
+
+// ── Reasignación ───────────────────────────────
+//
+// Reusar cancelación + alta le decía a la que pierde el turno "se canceló un
+// turno tuyo, el horario quedó libre", que es falso: el turno existe y lo toma
+// otra. Y a la que lo gana le llegaba como una reserva nueva de la clienta.
+const { textoReasignacionSaliente, textoReasignacionEntrante } = require('../services/whatsapp');
+
+test('a la que pierde el turno se le dice a quien pasa, no que se cancelo', () => {
+  const t = textoReasignacionSaliente(turno, { profesionalNueva: 'Daniela' });
+  assert.match(t, /Daniela/);
+  assert.match(t, /PRP/);
+  assert.doesNotMatch(t, /cancel/i);
+  assert.doesNotMatch(t, /qued\u00f3 libre/i);
+  assert.doesNotMatch(t, /1123456789/);
+});
+
+test('a la que lo gana se le dice que se lo pasaron, no que es una reserva nueva', () => {
+  const t = textoReasignacionEntrante(turno, { profesionalAnterior: 'Noemí' });
+  assert.match(t, /Noemí/);
+  assert.match(t, /15:00/);
+  assert.doesNotMatch(t, /reserv\u00f3/i);
+  assert.doesNotMatch(t, /1123456789/);
+});

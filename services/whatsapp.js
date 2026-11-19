@@ -306,6 +306,30 @@ function textoCancelacionGrupo(turnos, { tipo, profesionalNombre } = {}) {
     `\n\nEl bloque quedó libre.`;
 }
 
+// Cuando Daniela le pasa un turno a otra profesional, ninguna de las dos está
+// viendo una cancelación ni una reserva nueva: el turno es el mismo y la clienta
+// no se enteró de nada. Decírselo como baja y alta las haría mirar el horario
+// como libre, o llamar a la clienta para confirmar algo que no cambió.
+function textoReasignacionSaliente(turno, { profesionalNueva } = {}) {
+  const fechaStr = formatearFecha(turno.fecha);
+  return `🔄 Este turno pasa a ${profesionalNueva}\n\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n` +
+    `👤 ${turno.cliente_nombre} ${turno.cliente_apellido}\n\n` +
+    `Ya no lo tenés en tu agenda.`;
+}
+
+function textoReasignacionEntrante(turno, { profesionalAnterior } = {}) {
+  const fechaStr = formatearFecha(turno.fecha);
+  return `🔄 Te pasaron un turno${profesionalAnterior ? ` de ${profesionalAnterior}` : ''}\n\n` +
+    `📅 ${fechaStr}\n` +
+    `⏰ ${turno.hora_inicio} hs\n` +
+    `💅 ${turno.servicio.nombre}\n` +
+    `👤 ${turno.cliente_nombre} ${turno.cliente_apellido}\n\n` +
+    `La clienta ya tenía este turno: no hace falta avisarle nada.`;
+}
+
 function textoModificacion(turnoAnterior, turnoNuevo, { tipo, profesionalNombre } = {}) {
   const fechaAntes = formatearFecha(turnoAnterior.fecha);
   const fechaDespues = formatearFecha(turnoNuevo.fecha);
@@ -428,6 +452,8 @@ module.exports = {
   textoCancelacion,
   textoCancelacionGrupo,
   textoModificacion,
+  textoReasignacionSaliente,
+  textoReasignacionEntrante,
   enviarConfirmacion,
   enviarConfirmacionGrupo,
   enviarRecordatorio,
