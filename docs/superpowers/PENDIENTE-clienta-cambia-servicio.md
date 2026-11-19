@@ -46,6 +46,30 @@ El 7 es el que protege lo de antes: el camino viejo tiene que seguir intacto.
 
 ---
 
+## Menores anotados, sin hacer
+
+Salieron del review de la rama. Ninguno afecta plata ni datos; están acá para
+que no se pierdan.
+
+1. **El `token_acceso` viaja por query string** en el preview y en el listado de
+   horarios, así que queda en los logs de Railway y en el historial del
+   navegador. Es el patrón que ya usa el repo (`/cancelar?token=`), así que
+   cambiarlo solo acá lo volvería inconsistente: o se cambia en todos o en
+   ninguno.
+2. **El select de servicio puede mostrar uno distinto del que el turno tiene**,
+   si ese servicio quedó inactivo: no viene en la lista, así que el navegador
+   pinta el primero. El PATCH manda el id real y no cambia nada, pero la
+   pantalla miente. Se arregla agregando el servicio actual como primera opción.
+3. **El preview no devuelve `hora_fin`**, que el spec pedía. En el momento del
+   preview todavía no hay hora elegida, así que se devolvió `duracion_minutos`.
+4. **El preview no chequea estado, `grupo_reserva` ni la ventana de 24 h:**
+   previsualiza un cambio que el PATCH después rechaza. Hoy la pantalla lo tapa.
+5. **`textoModificacion` no muestra el servicio anterior**, así que si cambia
+   solo el servicio, el aviso a la profesional dice "Antes" y "Ahora" con la
+   misma fecha y hora, y el único cambio real queda sin contraparte.
+6. **La confirmación a la clienta no menciona el precio nuevo.** Lo vio en el
+   preview, pero el WhatsApp que le queda no lo dice.
+
 ## Lo que queda afuera a propósito
 
 - **No hay tope de precio:** puede pasar a un servicio más caro o más barato. Ya
