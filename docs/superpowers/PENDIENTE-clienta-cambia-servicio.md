@@ -13,8 +13,8 @@ de los **dos** repos. Lo que queda necesita el deploy, así que va de tu lado.
 todavía no existen en producción: el endpoint de previsualización y el parámetro
 `excluir_turno_id` del listado de horarios.
 
-1. Mergear y pushear el **backend**, y desplegarlo en Railway a mano.
-2. Recién entonces mergear el **frontend** a master (Vercel lo publica solo).
+1. Mergear y pushear el **backend**. Railway lo despliega solo (está conectado a GitHub).
+2. Cuando ese deploy figure **Deployment successful** en Railway, mergear y pushear el **frontend**; Vercel lo publica solo.
 
 Si se hace al revés, a la clienta que entre a cambiar su turno no le va a
 aparecer la cuenta de lo que le queda, y la lista de horarios le va a esconder

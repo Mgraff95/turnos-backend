@@ -17,8 +17,8 @@ El panel nuevo le pega a un endpoint que hoy no existe
 (`GET /api/admin/disponibilidad/:fecha/:servicio_id/:profesional_id`). Y el
 frontend **se despliega solo** cuando se mergea a master, así que:
 
-1. Mergear y pushear el **backend**, y desplegarlo en Railway a mano.
-2. Recién entonces mergear el **frontend** a master (Vercel lo publica solo).
+1. Mergear y pushear el **backend**. Railway lo despliega solo (está conectado a GitHub).
+2. Cuando ese deploy figure **Deployment successful** en Railway, mergear y pushear el **frontend**; Vercel lo publica solo.
 
 Si se hace al revés, el formulario de edición del panel se queda **sin
 horarios** —la lista va a venir vacía siempre— hasta que el backend salga. No

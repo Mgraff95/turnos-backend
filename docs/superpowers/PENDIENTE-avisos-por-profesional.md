@@ -46,7 +46,7 @@ ignoran), pero tienen que ser los mismos dígitos.
 
 ## 3. Deploy
 
-Backend a Railway, a mano, como siempre.
+Backend y frontend se despliegan **solos** al pushear a master: Railway está conectado a GitHub igual que Vercel. No hay que apretar nada.
 
 ---
 
