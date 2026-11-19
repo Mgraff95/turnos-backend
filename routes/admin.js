@@ -5,7 +5,14 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
-const { resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
+const {
+  resolverExtras,
+  resolverProfesionalYPlata,
+  plataDelTurno,
+  plataReasignada,
+  cargarProfesionalActiva
+} = require('../lib/reservas');
+const { cambiosDeTurno, duracionConExtras, puedeReasignar, MENSAJES_EDICION } = require('../lib/edicion');
 const { authAdmin } = require('../middleware/auth');
 const {
   calcularHoraFin,
@@ -13,6 +20,7 @@ const {
   verificarYActualizar,
   verificarYReservarBloque,
   resolverBloqueConIntercalados,
+  obtenerHorariosDisponibles,
   horaAMinutos,
   minutosAHora
 } = require('../lib/availability');
@@ -338,11 +346,12 @@ router.post('/turnos/multi', authAdmin, async (req, res, next) => {
 router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
   try {
     const turnoId = parseInt(req.params.id);
-    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio } = req.body;
- 
+    // `profesional_id` es opcional: sin él, el turno se queda con la dueña del
+    // servicio, que es el comportamiento de siempre.
+    const { nombre, apellido, telefono, servicio_id, fecha, hora_inicio, profesional_id } = req.body;
+
     // El servicio viene incluido porque si el cambio le mueve el turno de
-    // profesional, el aviso de cancelación a la que lo pierde nombra el
-    // servicio que tenía antes.
+    // profesional, el aviso a la que lo pierde nombra el servicio que tenía.
     const turnoActual = await prisma.turno.findUnique({
       where: { id: turnoId },
       include: { servicio: true }
@@ -363,50 +372,110 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
     });
     if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
  
-    // Detectar qué cambió (servicio, fecha u horario) comparando con el turno actual
-    const fechaAntes = turnoActual.fecha.toISOString().split('T')[0];
-    const cambioServicio = parseInt(servicio_id) !== turnoActual.servicio_id;
-    const cambioFecha = fecha !== fechaAntes;
-    const cambioHora = hora_inicio !== turnoActual.hora_inicio;
- 
-    const horaFin = calcularHoraFin(hora_inicio, servicio.duracion_minutos);
- 
-    // Si cambio el servicio, la profesional y la comision se recalculan con el:
-    // si no, el turno queda con la profesional del servicio viejo y la
-    // liquidacion miente. El update conserva extras_ids, asi que entran en el
-    // precio base.
-    const extrasActuales = turnoActual.extras_ids?.length
-      ? await prisma.extra.findMany({ where: { id: { in: turnoActual.extras_ids } } })
-      : [];
-    const { profesionalId, plataPorServicioId } = await resolverProfesionalYPlata([
-      { servicio, extras: extrasActuales }
-    ]);
+    // Quien atiende: la del body si vino, y si no la dueña del servicio. Un
+    // `profesional_id` que no es un número no se interpreta como "no vino": es
+    // un pedido mal armado y se rechaza.
+    const sinProfesional = profesional_id === undefined || profesional_id === null || profesional_id === '';
+    const profesionalPedida = sinProfesional ? servicio.profesional_id : parseInt(profesional_id);
+    if (!Number.isInteger(profesionalPedida)) {
+      return res.status(400).json({ error: 'Profesional inválida' });
+    }
 
-    const turno = await verificarYActualizar(turnoId, {
-      cliente_nombre: nombre.trim(),
-      cliente_apellido: apellido.trim(),
-      cliente_telefono: telLimpio,
+    // La guarda mira la profesional EFECTIVA, no si el campo vino en el body:
+    // cambiarle el servicio a uno de otra dueña también mueve el turno de
+    // agenda. Partir un bloque continuo entre dos agendas deja algo que el
+    // camino de alta no permite crear; el resto de la edición sigue abierta.
+    const permiso = puedeReasignar(turnoActual, profesionalPedida);
+    if (!permiso.ok) {
+      return res.status(409).json({ error: MENSAJES_EDICION[permiso.motivo] });
+    }
+
+    // Dejar las cosas como están nunca puede fallar: si la profesional del turno
+    // se desactivó, sus turnos históricos tienen que seguir editándose. El
+    // chequeo de `activo` corre solo cuando se le ASIGNA el turno a alguien.
+    let profesional;
+    try {
+      profesional = profesionalPedida === turnoActual.profesional_id
+        ? await prisma.profesional.findUnique({ where: { id: profesionalPedida } })
+        : await cargarProfesionalActiva(profesionalPedida);
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.publico || 'Profesional no disponible' });
+      throw err;
+    }
+    if (!profesional) return res.status(404).json({ error: 'Profesional no encontrada' });
+
+    const cambios = cambiosDeTurno(turnoActual, {
       servicio_id: parseInt(servicio_id),
-      profesional_id: profesionalId,
-      ...plataPorServicioId[servicio.id],
-      fecha: new Date(fecha),
-      hora_inicio,
-      hora_fin: horaFin
+      profesional_id: profesional.id,
+      fecha,
+      hora_inicio
     });
+
+    // Dos lecturas distintas de los extras, a propósito:
+    //
+    // - Si cambió el servicio, se filtran contra el nuevo: los que no aplican
+    //   dejan de contar en el precio y salen de la lista guardada.
+    // - Si no cambió, se leen TAL COMO ESTÁN, sin filtrar por `activo`. Un extra
+    //   dado de baja después de la reserva sigue ocupando los minutos que ocupa:
+    //   filtrarlo le acortaba el hora_fin al turno y liberaba tiempo en el que
+    //   hay una clienta sentada.
+    const extrasDelTurno = cambios.servicio
+      ? await resolverExtras(turnoActual.extras_ids, parseInt(servicio_id))
+      : (turnoActual.extras_ids?.length
+        ? await prisma.extra.findMany({ where: { id: { in: turnoActual.extras_ids } } })
+        : []);
+
+    // La plata se recongela SOLO si cambió qué se hace o quién lo hace, y ni
+    // siquiera entonces se recalcula entera: si el servicio es el mismo, el
+    // `precio_base` es la foto de lo que la clienta aceptó y no se toca —lo
+    // único que cambia de manos es la comisión—. Antes se recalculaba todo en
+    // toda edición, así que corregir un apellido movía el precio del turno a los
+    // valores de hoy, y con él una liquidación ya compartida.
+    const plata = !cambios.recalcularPlata
+      ? {}
+      : cambios.servicio
+        ? plataDelTurno(servicio, profesional, extrasDelTurno)
+        : plataReasignada(turnoActual, servicio, profesional, extrasDelTurno);
+
+    // La lista guardada se actualiza solo cuando cambió el servicio, que es
+    // cuando algún extra pudo quedar afuera del precio.
+    const extras = cambios.servicio ? { extras_ids: extrasDelTurno.map(e => e.id) } : {};
+
+    let turno;
+    try {
+      turno = await verificarYActualizar(turnoId, {
+        cliente_nombre: nombre.trim(),
+        cliente_apellido: apellido.trim(),
+        cliente_telefono: telLimpio,
+        servicio_id: parseInt(servicio_id),
+        profesional_id: profesional.id,
+        ...plata,
+        ...extras,
+        fecha: new Date(fecha),
+        hora_inicio,
+        hora_fin: calcularHoraFin(hora_inicio, duracionConExtras(servicio, extrasDelTurno))
+      });
+    } catch (err) {
+      if (err.message === 'HORARIO_NO_DISPONIBLE') {
+        return res.status(409).json({ error: `Ese horario ya está ocupado para ${profesional.nombre}.` });
+      }
+      throw err;
+    }
  
-    // Si cambió el servicio, la fecha o el horario, avisar al cliente por WhatsApp
-    if (cambioServicio || cambioFecha || cambioHora) {
+    // A la clienta solo se le avisa de lo que la afecta: servicio, fecha u hora.
+    // Una reasignación es organización interna del estudio y no le llega.
+    if (cambios.avisarClienta) {
       const { enviarMensaje } = require('../services/whatsapp');
- 
-      const cambios = [];
-      if (cambioServicio) cambios.push('el servicio');
-      if (cambioFecha) cambios.push('la fecha');
-      if (cambioHora) cambios.push('el horario');
- 
+
+      const queCambioLista = [];
+      if (cambios.servicio) queCambioLista.push('el servicio');
+      if (cambios.fecha) queCambioLista.push('la fecha');
+      if (cambios.hora) queCambioLista.push('el horario');
+
       let queCambio;
-      if (cambios.length === 1) queCambio = cambios[0];
-      else if (cambios.length === 2) queCambio = `${cambios[0]} y ${cambios[1]}`;
-      else queCambio = `${cambios.slice(0, -1).join(', ')} y ${cambios[cambios.length - 1]}`;
+      if (queCambioLista.length === 1) queCambio = queCambioLista[0];
+      else if (queCambioLista.length === 2) queCambio = `${queCambioLista[0]} y ${queCambioLista[1]}`;
+      else queCambio = `${queCambioLista.slice(0, -1).join(', ')} y ${queCambioLista[queCambioLista.length - 1]}`;
  
       const fechaStr = new Date(turno.fecha).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' });
  
@@ -422,23 +491,75 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
       enviarMensaje(turno.cliente_telefono, mensaje).catch(err =>
         console.error('Error enviando WA de modificación (admin):', err.message)
       );
+    }
 
-      // Si el cambio de servicio le cambió la profesional, avisarModificacion
-      // lo resuelve como una baja y un alta.
+    // Fuera del if de la clienta: una reasignación no le llega a ella, pero las
+    // dos profesionales tienen que enterarse. Si cambió la profesional,
+    // avisarModificacion lo resuelve como una baja y un alta.
+    if (cambios.avisarProfesionales) {
       avisarModificacion(turnoActual, turno, SOLO_LA_PROFESIONAL).catch(err =>
         console.error('Error avisando la modificación a la profesional:', err.message)
       );
     }
 
     res.json({ success: true, turno });
-  } catch (err) {
-    if (err.message === 'HORARIO_NO_DISPONIBLE') {
-      return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
-    }
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
  
+// ── Disponibilidad de una profesional explícita ──
+//
+// El endpoint público deriva la profesional del servicio, así que no sirve para
+// preguntar "qué huecos tiene Noemí para un servicio de Daniela", que es lo que
+// el panel necesita para reasignar un turno.
+//
+// Va acá, con authAdmin, y no como un parámetro más del público: ese endpoint no
+// tiene auth, y dejar elegir la profesional ahí permitiría a cualquiera cruzar
+// las agendas del estudio.
+//
+// `respetarAntelacion: false` siempre: Daniela no está sujeta a la ventana de
+// 24 horas, puede rellenar un hueco de hoy.
+router.get('/disponibilidad/:fecha/:servicio_id/:profesional_id', authAdmin, async (req, res, next) => {
+  try {
+    const { fecha, servicio_id, profesional_id } = req.params;
+    const servicioId = parseInt(servicio_id);
+    const profesionalId = parseInt(profesional_id);
+
+    const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
+    if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    const profesional = await prisma.profesional.findUnique({
+      where: { id: profesionalId },
+      select: { id: true, nombre: true, activo: true }
+    });
+    if (!profesional) return res.status(404).json({ error: 'Profesional no encontrada' });
+
+    // Un servicio dado de baja o una profesional desactivada no ofrecen nada,
+    // igual que en el endpoint público.
+    if (!servicio.activo || !profesional.activo) {
+      return res.json({ fecha, servicio: servicio.nombre, profesional: profesional.nombre, horarios: [] });
+    }
+
+    const extras = await resolverExtras(req.query.extras, servicioId);
+
+    // Al editar un turno, ese turno no puede taparse su propio horario. Importa
+    // sobre todo con los servicios de camilla: el turno que se está moviendo
+    // ocupa la camilla, así que sin excluirlo su propia hora desaparece de la
+    // agenda de la otra profesional y la reasignación se vuelve imposible.
+    const excluir = parseInt(req.query.excluir_turno_id);
+    const excluirTurnoIds = Number.isInteger(excluir) ? [excluir] : [];
+
+    const horarios = await obtenerHorariosDisponibles(
+      new Date(fecha),
+      duracionConExtras(servicio, extras),
+      servicioId,
+      profesionalId,
+      { respetarAntelacion: false, usaCamilla: servicio.usa_camilla === true, excluirTurnoIds }
+    );
+
+    res.json({ fecha, servicio: servicio.nombre, profesional: profesional.nombre, horarios });
+  } catch (err) { next(err); }
+});
+
 // ── Recordatorios pendientes ───────────────────
 router.get('/recordatorios-pendientes', authAdmin, async (req, res, next) => {
   try {

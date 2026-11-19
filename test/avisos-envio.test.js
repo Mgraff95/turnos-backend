@@ -67,8 +67,8 @@ test('si cambia la profesional, una se entera de la baja y la otra del alta', as
     }
   });
   const porTelefono = Object.fromEntries(enviados.map(e => [e.telefono, e.mensaje]));
-  assert.match(porTelefono['1198765432'], /cancel/i);
-  assert.match(porTelefono['1177778888'], /agendaron|nuevo/i);
+  assert.match(porTelefono['1198765432'], /pasa a Flor/);
+  assert.match(porTelefono['1177778888'], /Te pasaron un turno de Noemí/);
 });
 
 // Hallazgo del review de rama: el spec, el plan y el PENDIENTE dicen que una
@@ -102,4 +102,26 @@ test('un turno de Daniela no se loguea como descarte', async () => {
     console.log = logOriginal;
   }
   assert.deepEqual(lineas.filter(l => l.includes('teléfono')), []);
+});
+
+// Hallazgo del review de diseño: reusar cancelación + alta le decía a la que
+// pierde el turno que el horario quedó libre, y a la que lo gana que la clienta
+// acababa de reservar. Las dos cosas son falsas en una reasignación.
+test('al reasignar, ninguna recibe cancelacion ni alta', async () => {
+  const enviados = [];
+  process.env.DANIELA_TELEFONO = ESTUDIO;
+  const anterior = { ...turno, profesional_id: 2 };
+  const nuevo = { ...turno, profesional_id: 3 };
+  const porId = { 2: { nombre: 'Noemí', telefono: '1198765432' }, 3: { nombre: 'Flor', telefono: '1177778888' } };
+  await avisarModificacion(anterior, nuevo, {
+    incluirEstudio: false,
+    deps: {
+      prisma: { profesional: { findUnique: async ({ where }) => porId[where.id] } },
+      enviar: async (telefono, mensaje) => { enviados.push({ telefono, mensaje }); return true; }
+    }
+  });
+  const porTelefono = Object.fromEntries(enviados.map(e => [e.telefono, e.mensaje]));
+  assert.doesNotMatch(porTelefono['1198765432'], /cancel/i);
+  assert.doesNotMatch(porTelefono['1177778888'], /reservó/i);
+  assert.doesNotMatch(porTelefono['1198765432'], /1155556666/);
 });
