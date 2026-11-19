@@ -327,7 +327,7 @@ function textoReasignacionEntrante(turno, { profesionalAnterior } = {}) {
     `⏰ ${turno.hora_inicio} hs\n` +
     `💅 ${turno.servicio.nombre}\n` +
     `👤 ${turno.cliente_nombre} ${turno.cliente_apellido}\n\n` +
-    `La clienta ya tenía este turno: no hace falta avisarle nada.`;
+    `La clienta ya está al tanto de este turno.`;
 }
 
 function textoModificacion(turnoAnterior, turnoNuevo, { tipo, profesionalNombre } = {}) {
