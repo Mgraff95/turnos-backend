@@ -7,11 +7,12 @@ const {
   validarTelefono,
   resolverExtras,
   resolverProfesionalYPlata,
+  calcularPrecioBase,
   plataDelTurno,
   cargarProfesionalActiva
 } = require('../lib/reservas');
 const { demasiadoCerca, errorAntelacion, puedeModificarse, MENSAJES_MODIFICACION } = require('../lib/fechas');
-const { duracionConExtras, puedeCambiarServicio, MENSAJES_EDICION } = require('../lib/edicion');
+const { duracionConExtras, puedeCambiarServicio, cambioDeExtras, MENSAJES_EDICION } = require('../lib/edicion');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -601,6 +602,52 @@ router.get('/mistura/:telefono/:apellido', async (req, res, next) => {
 });
  
 // ── PATCH /api/turnos/:id → Modificar turno ────
+// ── GET /api/turnos/:id/cambio-preview ──────────────────
+//
+// Qué le queda si cambia el servicio, antes de confirmar: la duración, el
+// precio, quién la atiende y qué extras pierde.
+//
+// La cuenta la hace el backend y no el frontend a propósito: la regla de que los
+// extras de precio variable no suman al precio vive en lib/reservas.js, y
+// duplicarla en la pantalla haría que el número que la clienta ve se separe del
+// que se congela en el turno. Usa exactamente los mismos helpers que el PATCH
+// al guardar.
+router.get('/:id/cambio-preview', async (req, res, next) => {
+  try {
+    const { token, nuevo_servicio_id } = req.query;
+
+    const turno = await prisma.turno.findUnique({ where: { id: parseInt(req.params.id) } });
+    // Mismo criterio que el PATCH: un token que no corresponde no se distingue
+    // de un turno que no existe, así que no se puede averiguar nada ajeno.
+    if (!turno || turno.token_acceso !== token) {
+      return res.status(404).json({ error: 'Turno no encontrado' });
+    }
+
+    const servicio = await prisma.servicio.findUnique({
+      where: { id: parseInt(nuevo_servicio_id) },
+      include: { profesional: { select: { id: true, nombre: true, activo: true } } }
+    });
+    if (!servicio || !servicio.activo || !servicio.profesional?.activo) {
+      return res.status(404).json({ error: 'Ese servicio no está disponible' });
+    }
+
+    const guardados = turno.extras_ids?.length
+      ? await prisma.extra.findMany({ where: { id: { in: turno.extras_ids } } })
+      : [];
+    const aplican = await resolverExtras(turno.extras_ids, servicio.id);
+    const { conservados, descartados } = cambioDeExtras(guardados, aplican);
+
+    res.json({
+      servicio: { id: servicio.id, nombre: servicio.nombre, duracion_minutos: servicio.duracion_minutos },
+      profesional: { id: servicio.profesional.id, nombre: servicio.profesional.nombre },
+      extras_conservados: conservados.map(e => ({ id: e.id, nombre: e.nombre, precio_pesos: e.precio_pesos })),
+      extras_descartados: descartados.map(e => ({ id: e.id, nombre: e.nombre })),
+      duracion_minutos: duracionConExtras(servicio, conservados),
+      precio: calcularPrecioBase(servicio, conservados)
+    });
+  } catch (err) { next(err); }
+});
+
 router.patch('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;

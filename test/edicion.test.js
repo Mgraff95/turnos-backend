@@ -88,3 +88,26 @@ test('un turno ya pagado no cambia de servicio desde la web', () => {
     { ok: false, motivo: 'PAGADO_NO_SE_CAMBIA' }
   );
 });
+
+// Los extras del turno contra los que el servicio nuevo ofrece. La clienta
+// tiene que ver cuáles pierde ANTES de confirmar: perder un extra sin saberlo
+// es uno de los anti-objetivos del diseño.
+const { cambioDeExtras } = require('../lib/edicion');
+
+test('los extras se parten en los que siguen y los que se van', () => {
+  const guardados = [{ id: 1, nombre: 'Mascarilla' }, { id: 2, nombre: 'Masaje' }];
+  const aplican = [{ id: 2, nombre: 'Masaje' }];
+  const r = cambioDeExtras(guardados, aplican);
+  assert.deepEqual(r.conservados.map(e => e.id), [2]);
+  assert.deepEqual(r.descartados.map(e => e.id), [1]);
+});
+
+test('si el servicio nuevo ofrece todos, no se descarta ninguno', () => {
+  const guardados = [{ id: 1, nombre: 'Mascarilla' }];
+  const r = cambioDeExtras(guardados, guardados);
+  assert.deepEqual(r.descartados, []);
+});
+
+test('un turno sin extras no descarta nada', () => {
+  assert.deepEqual(cambioDeExtras([], []), { conservados: [], descartados: [] });
+});
