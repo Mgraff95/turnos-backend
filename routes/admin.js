@@ -19,6 +19,7 @@ const {
   verificarYActualizar,
   verificarYReservarBloque,
   resolverBloqueConIntercalados,
+  obtenerHorariosDisponibles,
   horaAMinutos,
   minutosAHora
 } = require('../lib/availability');
@@ -485,6 +486,53 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
   }
 });
  
+// ── Disponibilidad de una profesional explícita ──
+//
+// El endpoint público deriva la profesional del servicio, así que no sirve para
+// preguntar "qué huecos tiene Noemí para un servicio de Daniela", que es lo que
+// el panel necesita para reasignar un turno.
+//
+// Va acá, con authAdmin, y no como un parámetro más del público: ese endpoint no
+// tiene auth, y dejar elegir la profesional ahí permitiría a cualquiera cruzar
+// las agendas del estudio.
+//
+// `respetarAntelacion: false` siempre: Daniela no está sujeta a la ventana de
+// 24 horas, puede rellenar un hueco de hoy.
+router.get('/disponibilidad/:fecha/:servicio_id/:profesional_id', authAdmin, async (req, res, next) => {
+  try {
+    const { fecha, servicio_id, profesional_id } = req.params;
+    const servicioId = parseInt(servicio_id);
+    const profesionalId = parseInt(profesional_id);
+
+    const servicio = await prisma.servicio.findUnique({ where: { id: servicioId } });
+    if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    const profesional = await prisma.profesional.findUnique({
+      where: { id: profesionalId },
+      select: { id: true, nombre: true, activo: true }
+    });
+    if (!profesional) return res.status(404).json({ error: 'Profesional no encontrada' });
+
+    // Un servicio dado de baja o una profesional desactivada no ofrecen nada,
+    // igual que en el endpoint público.
+    if (!servicio.activo || !profesional.activo) {
+      return res.json({ fecha, servicio: servicio.nombre, profesional: profesional.nombre, horarios: [] });
+    }
+
+    const extras = await resolverExtras(req.query.extras, servicioId);
+
+    const horarios = await obtenerHorariosDisponibles(
+      new Date(fecha),
+      duracionConExtras(servicio, extras),
+      servicioId,
+      profesionalId,
+      { respetarAntelacion: false, usaCamilla: servicio.usa_camilla === true }
+    );
+
+    res.json({ fecha, servicio: servicio.nombre, profesional: profesional.nombre, horarios });
+  } catch (err) { next(err); }
+});
+
 // ── Recordatorios pendientes ───────────────────
 router.get('/recordatorios-pendientes', authAdmin, async (req, res, next) => {
   try {
