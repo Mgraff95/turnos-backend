@@ -69,3 +69,45 @@ test('editar un turno de un bloque sin cambiarle la profesional se permite', () 
   const enBloque = { ...turno, grupo_reserva: 'g1' };
   assert.deepEqual(puedeReasignar(enBloque, 2), { ok: true });
 });
+
+// ── El cambio de servicio por la clienta ───────
+//
+// Si el turno tiene pago hecho, la seña y el saldo no se pueden recalcular sin
+// decidir quién pone la diferencia, y eso es una conversación, no un
+// formulario. Hoy no puede pasar (el cobro está apagado): es el freno que
+// evita un bug de plata el día que se prenda.
+const { puedeCambiarServicio } = require('../lib/edicion');
+
+test('un turno sin pago puede cambiar de servicio', () => {
+  assert.deepEqual(puedeCambiarServicio({ pago_realizado: false, pago_monto: null }), { ok: true });
+});
+
+test('un turno ya pagado no cambia de servicio desde la web', () => {
+  assert.deepEqual(
+    puedeCambiarServicio({ pago_realizado: true, pago_monto: 5000 }),
+    { ok: false, motivo: 'PAGADO_NO_SE_CAMBIA' }
+  );
+});
+
+// Los extras del turno contra los que el servicio nuevo ofrece. La clienta
+// tiene que ver cuáles pierde ANTES de confirmar: perder un extra sin saberlo
+// es uno de los anti-objetivos del diseño.
+const { cambioDeExtras } = require('../lib/edicion');
+
+test('los extras se parten en los que siguen y los que se van', () => {
+  const guardados = [{ id: 1, nombre: 'Mascarilla' }, { id: 2, nombre: 'Masaje' }];
+  const aplican = [{ id: 2, nombre: 'Masaje' }];
+  const r = cambioDeExtras(guardados, aplican);
+  assert.deepEqual(r.conservados.map(e => e.id), [2]);
+  assert.deepEqual(r.descartados.map(e => e.id), [1]);
+});
+
+test('si el servicio nuevo ofrece todos, no se descarta ninguno', () => {
+  const guardados = [{ id: 1, nombre: 'Mascarilla' }];
+  const r = cambioDeExtras(guardados, guardados);
+  assert.deepEqual(r.descartados, []);
+});
+
+test('un turno sin extras no descarta nada', () => {
+  assert.deepEqual(cambioDeExtras([], []), { conservados: [], descartados: [] });
+});
