@@ -63,3 +63,30 @@ test('sin camilla el where no menciona usa_camilla', () => {
   const w = whereHoldsActivos(FECHA, 2);
   assert.equal(JSON.stringify(w).includes('usa_camilla'), false);
 });
+
+// ── Excluir el turno que se está editando ──────
+//
+// Hallazgo del review de rama (Critical): sin esto, el panel tenía que
+// reinsertar a mano la hora original en la pantalla, y ese parche no sabía nada
+// del horario de trabajo de la otra profesional: ofrecía horas en agendas que
+// ese día no atienden, y el motor las aceptaba porque no mira los rangos.
+const { whereTurnosQueOcupan } = require('../lib/availability');
+
+test('sin exclusiones el where no habla de ids', () => {
+  const w = whereTurnosQueOcupan(FECHA, 2, false);
+  assert.equal(w.id, undefined);
+  assert.equal(w.profesional_id, 2);
+  assert.equal(w.estado, 'confirmado');
+});
+
+test('el turno que se edita no ocupa su propio horario', () => {
+  const w = whereTurnosQueOcupan(FECHA, 2, false, [42]);
+  assert.deepEqual(w.id, { notIn: [42] });
+});
+
+test('la exclusion tambien vale para la camilla, que es la que cruza agendas', () => {
+  const w = whereTurnosQueOcupan(FECHA, 2, true, [42]);
+  assert.deepEqual(w.id, { notIn: [42] });
+  assert.equal(w.profesional_id, undefined);
+  assert.equal(w.OR.length, 2);
+});

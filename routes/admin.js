@@ -9,6 +9,7 @@ const {
   resolverExtras,
   resolverProfesionalYPlata,
   plataDelTurno,
+  plataReasignada,
   cargarProfesionalActiva
 } = require('../lib/reservas');
 const { cambiosDeTurno, duracionConExtras, puedeReasignar, MENSAJES_EDICION } = require('../lib/edicion');
@@ -371,31 +372,37 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
     });
     if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
  
-    // Partir un bloque continuo entre dos agendas deja algo que el camino de
-    // alta no permite crear. El resto de la edición de ese turno sigue abierta.
-    if (profesional_id !== undefined) {
-      const permiso = puedeReasignar(turnoActual, parseInt(profesional_id));
-      if (!permiso.ok) {
-        return res.status(400).json({ error: MENSAJES_EDICION[permiso.motivo] });
-      }
+    // Quien atiende: la del body si vino, y si no la dueña del servicio. Un
+    // `profesional_id` que no es un número no se interpreta como "no vino": es
+    // un pedido mal armado y se rechaza.
+    const sinProfesional = profesional_id === undefined || profesional_id === null || profesional_id === '';
+    const profesionalPedida = sinProfesional ? servicio.profesional_id : parseInt(profesional_id);
+    if (!Number.isInteger(profesionalPedida)) {
+      return res.status(400).json({ error: 'Profesional inválida' });
     }
 
-    // Quien atiende: la del body si vino, y si no la dueña del servicio. En los
-    // dos casos tiene que estar activa, con el mismo criterio que los cinco
-    // caminos de alta.
+    // La guarda mira la profesional EFECTIVA, no si el campo vino en el body:
+    // cambiarle el servicio a uno de otra dueña también mueve el turno de
+    // agenda. Partir un bloque continuo entre dos agendas deja algo que el
+    // camino de alta no permite crear; el resto de la edición sigue abierta.
+    const permiso = puedeReasignar(turnoActual, profesionalPedida);
+    if (!permiso.ok) {
+      return res.status(409).json({ error: MENSAJES_EDICION[permiso.motivo] });
+    }
+
+    // Dejar las cosas como están nunca puede fallar: si la profesional del turno
+    // se desactivó, sus turnos históricos tienen que seguir editándose. El
+    // chequeo de `activo` corre solo cuando se le ASIGNA el turno a alguien.
     let profesional;
     try {
-      profesional = await cargarProfesionalActiva(
-        profesional_id !== undefined ? parseInt(profesional_id) : servicio.profesional_id
-      );
+      profesional = profesionalPedida === turnoActual.profesional_id
+        ? await prisma.profesional.findUnique({ where: { id: profesionalPedida } })
+        : await cargarProfesionalActiva(profesionalPedida);
     } catch (err) {
       if (err.status) return res.status(err.status).json({ error: err.publico || 'Profesional no disponible' });
       throw err;
     }
-
-    // Los extras se filtran contra el servicio NUEVO: conservar uno que el
-    // servicio nuevo no ofrece lo sumaba al precio congelado.
-    const extrasActuales = await resolverExtras(turnoActual.extras_ids, parseInt(servicio_id));
+    if (!profesional) return res.status(404).json({ error: 'Profesional no encontrada' });
 
     const cambios = cambiosDeTurno(turnoActual, {
       servicio_id: parseInt(servicio_id),
@@ -404,17 +411,35 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
       hora_inicio
     });
 
-    // La plata se recongela SOLO si cambió qué se hace o quién lo hace. Antes se
-    // recalculaba en toda edición, así que corregirle el apellido a una clienta
-    // movía el precio del turno a los valores de hoy y con él una liquidación
-    // vieja.
-    const plata = cambios.recalcularPlata ? plataDelTurno(servicio, profesional, extrasActuales) : {};
+    // Dos lecturas distintas de los extras, a propósito:
+    //
+    // - Si cambió el servicio, se filtran contra el nuevo: los que no aplican
+    //   dejan de contar en el precio y salen de la lista guardada.
+    // - Si no cambió, se leen TAL COMO ESTÁN, sin filtrar por `activo`. Un extra
+    //   dado de baja después de la reserva sigue ocupando los minutos que ocupa:
+    //   filtrarlo le acortaba el hora_fin al turno y liberaba tiempo en el que
+    //   hay una clienta sentada.
+    const extrasDelTurno = cambios.servicio
+      ? await resolverExtras(turnoActual.extras_ids, parseInt(servicio_id))
+      : (turnoActual.extras_ids?.length
+        ? await prisma.extra.findMany({ where: { id: { in: turnoActual.extras_ids } } })
+        : []);
 
-    // Si cambió el servicio, los extras que el nuevo no ofrece dejan de contar
-    // en el precio: la lista guardada tiene que quedar igual que la que se
-    // cobró, o el detalle del turno muestra extras que nadie facturó. Si el
-    // servicio no cambió, no se toca.
-    const extras = cambios.servicio ? { extras_ids: extrasActuales.map(e => e.id) } : {};
+    // La plata se recongela SOLO si cambió qué se hace o quién lo hace, y ni
+    // siquiera entonces se recalcula entera: si el servicio es el mismo, el
+    // `precio_base` es la foto de lo que la clienta aceptó y no se toca —lo
+    // único que cambia de manos es la comisión—. Antes se recalculaba todo en
+    // toda edición, así que corregir un apellido movía el precio del turno a los
+    // valores de hoy, y con él una liquidación ya compartida.
+    const plata = !cambios.recalcularPlata
+      ? {}
+      : cambios.servicio
+        ? plataDelTurno(servicio, profesional, extrasDelTurno)
+        : plataReasignada(turnoActual, servicio, profesional, extrasDelTurno);
+
+    // La lista guardada se actualiza solo cuando cambió el servicio, que es
+    // cuando algún extra pudo quedar afuera del precio.
+    const extras = cambios.servicio ? { extras_ids: extrasDelTurno.map(e => e.id) } : {};
 
     let turno;
     try {
@@ -428,7 +453,7 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
         ...extras,
         fecha: new Date(fecha),
         hora_inicio,
-        hora_fin: calcularHoraFin(hora_inicio, duracionConExtras(servicio, extrasActuales))
+        hora_fin: calcularHoraFin(hora_inicio, duracionConExtras(servicio, extrasDelTurno))
       });
     } catch (err) {
       if (err.message === 'HORARIO_NO_DISPONIBLE') {
@@ -478,12 +503,7 @@ router.patch('/turnos/:id', authAdmin, async (req, res, next) => {
     }
 
     res.json({ success: true, turno });
-  } catch (err) {
-    if (err.message === 'HORARIO_NO_DISPONIBLE') {
-      return res.status(409).json({ error: 'Ese horario ya no está disponible.' });
-    }
-    next(err);
-  }
+  } catch (err) { next(err); }
 });
  
 // ── Disponibilidad de una profesional explícita ──
@@ -521,12 +541,19 @@ router.get('/disponibilidad/:fecha/:servicio_id/:profesional_id', authAdmin, asy
 
     const extras = await resolverExtras(req.query.extras, servicioId);
 
+    // Al editar un turno, ese turno no puede taparse su propio horario. Importa
+    // sobre todo con los servicios de camilla: el turno que se está moviendo
+    // ocupa la camilla, así que sin excluirlo su propia hora desaparece de la
+    // agenda de la otra profesional y la reasignación se vuelve imposible.
+    const excluir = parseInt(req.query.excluir_turno_id);
+    const excluirTurnoIds = Number.isInteger(excluir) ? [excluir] : [];
+
     const horarios = await obtenerHorariosDisponibles(
       new Date(fecha),
       duracionConExtras(servicio, extras),
       servicioId,
       profesionalId,
-      { respetarAntelacion: false, usaCamilla: servicio.usa_camilla === true }
+      { respetarAntelacion: false, usaCamilla: servicio.usa_camilla === true, excluirTurnoIds }
     );
 
     res.json({ fecha, servicio: servicio.nombre, profesional: profesional.nombre, horarios });

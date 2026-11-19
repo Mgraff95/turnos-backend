@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const prisma = require('../lib/prisma');
 const { validarTelefono, resolverExtras, resolverProfesionalYPlata } = require('../lib/reservas');
 const { demasiadoCerca, errorAntelacion, puedeModificarse, MENSAJES_MODIFICACION } = require('../lib/fechas');
+const { duracionConExtras } = require('../lib/edicion');
 const {
   obtenerHorariosDisponibles,
   obtenerHorariosDisponiblesBloque,
@@ -627,10 +628,19 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(400).json({ error: MENSAJES_MODIFICACION[permiso.motivo] });
     }
 
-    // Solo se mueve fecha y hora: el servicio no cambia, asi que la duracion,
-    // los extras, el precio congelado, la comision y la profesional quedan
-    // exactamente como estaban. No hay nada que recalcular ni que perder.
-    const horaFin = calcularHoraFin(horaInicio, turno.servicio.duracion_minutos);
+    // Solo se mueve fecha y hora: el servicio no cambia, asi que los extras, el
+    // precio congelado, la comision y la profesional quedan exactamente como
+    // estaban. No hay nada que recalcular ni que perder.
+    //
+    // La duracion SI hay que rearmarla, con los minutos de los extras incluidos.
+    // Sin eso, mover un turno que tiene extras lo guardaba mas corto de lo que
+    // dura y esos minutos quedaban ofrecibles a otra clienta. Los extras se leen
+    // tal como estan guardados, sin filtrar por `activo`: uno dado de baja
+    // despues de la reserva sigue ocupando el tiempo que ocupa.
+    const extrasDelTurno = turno.extras_ids?.length
+      ? await prisma.extra.findMany({ where: { id: { in: turno.extras_ids } } })
+      : [];
+    const horaFin = calcularHoraFin(horaInicio, duracionConExtras(turno.servicio, extrasDelTurno));
 
     let turnoActualizado;
     try {

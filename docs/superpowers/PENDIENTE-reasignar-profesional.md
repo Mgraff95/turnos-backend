@@ -52,6 +52,16 @@ nuevas: valen la pena aunque no los hayas pedido.
 
 ---
 
+## Un efecto del arreglo del `hora_fin`
+
+Los turnos **ya existentes** que tengan extras con minutos adicionales están
+guardados más cortos de lo que duran: ése era el bug. Cuando los edites, aunque
+sea para corregir un apellido, el turno se va a estirar a su duración real.
+
+Si en ese hueco que estaba libre de mentira ya entró otra clienta, la edición va
+a fallar con "Ese horario ya está ocupado para X". No es un bug nuevo: es la
+verdad asomando. Si pasa, el camino es mover uno de los dos turnos.
+
 ## Lo que queda afuera a propósito
 
 - **La etapa B**, que es que la clienta pueda cambiar el servicio de su turno
