@@ -64,3 +64,32 @@ test('validarPct rechaza lo que no es numero', () => {
   assert.throws(() => validarPct('treinta'), /COMISION_INVALIDA/);
   assert.throws(() => validarPct({}), /COMISION_INVALIDA/);
 });
+
+// ── La comisión de un turno reasignado ─────────
+//
+// Al reasignar, el % del servicio deja de valer: expresa el acuerdo con su
+// dueña, no con quien lo toma. Sin esto, un servicio con 0% pasado a Noemí la
+// deja cobrando sin dejarle nada al estudio.
+const { resolverComisionDeTurno } = require('../lib/comisiones');
+
+const prpDeNoemi = { profesional_id: 2, precio_pesos: 70000, comision_pct: null };
+const noemi = { id: 2, comision_pct_default: 50 };
+const daniela = { id: 1, comision_pct_default: null };
+
+test('el turno de su propia profesional se calcula como siempre', () => {
+  assert.deepEqual(resolverComisionDeTurno(prpDeNoemi, noemi, 70000), { comision_pct: 50, comision_monto: 35000 });
+});
+
+test('reasignado a la dueña del estudio, no hay nada que liquidar', () => {
+  assert.deepEqual(resolverComisionDeTurno(prpDeNoemi, daniela, 70000), { comision_pct: null, comision_monto: null });
+});
+
+test('el 0% del servicio no se hereda al reasignarlo: era el acuerdo con su dueña', () => {
+  const servicioDeDaniela = { profesional_id: 1, precio_pesos: 35000, comision_pct: 0 };
+  assert.deepEqual(resolverComisionDeTurno(servicioDeDaniela, noemi, 35000), { comision_pct: 50, comision_monto: 17500 });
+});
+
+test('el % propio del servicio sigue mandando mientras lo atienda su dueña', () => {
+  const conExcepcion = { profesional_id: 2, precio_pesos: 70000, comision_pct: 30 };
+  assert.deepEqual(resolverComisionDeTurno(conExcepcion, noemi, 70000), { comision_pct: 30, comision_monto: 21000 });
+});
